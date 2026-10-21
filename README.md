@@ -22,19 +22,20 @@ docker compose -f deploy/docker-compose.dev.yml up --build
 UI: [http://localhost:5173](http://localhost:5173)  
 API: [http://localhost:8080/healthz](http://localhost:8080/healthz)
 
-Production builds from a checkout of this repository; there is no image registry.
+Production pulls published images. GitHub Actions builds `linux/amd64` images on every push to `main` and pushes them to `ghcr.io/zypher-systems/hypervane-api` and `ghcr.io/zypher-systems/hypervane-web`. `latest` and `main` track that branch. A `vX.Y.Z` tag also publishes `X.Y.Z`.
 
 ```bash
 git clone https://github.com/zypher-systems/hypervane.git && cd hypervane
-git checkout v3.3.0
 cp .env.example .env
 # set HYPERVANE_MASTER_KEY (openssl rand -base64 32), POSTGRES_PASSWORD and
 # HYPERVANE_COOKIE_SECURE=true; HYPERVANE_HTTP_PORT picks the port (default 3000)
-HYPERVANE_VERSION=$(git describe --tags --always) \
-  docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d --build
+# HYPERVANE_VERSION selects the image tag (default latest)
+docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d
 ```
 
-To update, run `git fetch --tags`, check out the new release tag, and run the same `docker compose` command. The database volume is kept. Keep `-p hypervane` and `--env-file .env` every time: without the project name the stack is named `deploy` and starts with an empty database, and without the env file Compose looks for `deploy/.env`.
+To update, run the same `docker compose` command. The database volume is kept. Keep `-p hypervane` and `--env-file .env` every time: without the project name the stack is named `deploy` and starts with an empty database, and without the env file Compose looks for `deploy/.env`.
+
+To build from this checkout instead, use `api/Dockerfile` and `web/Dockerfile`. `HYPERVANE_VERSION` is the version baked into those local images; without it the build says `dev`.
 
 On first visit, create a Hypervane admin and add a Proxmox connection (user `root@pam!tokenid` plus API key). Self-signed TLS is the default (`skip-verify`); optionally pin the node certificate SHA-256.
 

@@ -1,15 +1,13 @@
-# Production stack, built from a checkout of github.com/zypher-systems/hypervane.
+# Production stack. Images are published to ghcr.io by GitHub Actions.
 # Run from the repository root, with a .env there (see .env.example):
 #
-#   git checkout v3.3.0
-#   HYPERVANE_VERSION=$(git describe --tags --always) \
-#     docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d --build
+#   docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d
 #
-# To update: git fetch --tags, check out the new tag, and run the same command.
+# HYPERVANE_VERSION picks the image tag. It defaults to latest, which tracks
+# main. A release tag vX.Y.Z is also published as X.Y.Z.
 # Always keep -p hypervane: without it the stack is named after this folder
 # ("deploy") and starts beside yours with an empty database. Keep --env-file
 # too: Compose would otherwise look for deploy/.env.
-# HYPERVANE_VERSION is the version baked into the images; without it the build says "dev".
 
 services:
   postgres:
@@ -38,12 +36,8 @@ services:
       retries: 10
 
   api:
-    image: hypervane-api:${HYPERVANE_VERSION:-dev}
-    build:
-      context: ../api
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${HYPERVANE_VERSION:-dev}
+    image: ghcr.io/zypher-systems/hypervane-api:${HYPERVANE_VERSION:-latest}
+    pull_policy: always
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://hypervane:${POSTGRES_PASSWORD}@postgres:5432/hypervane?sslmode=disable
@@ -65,12 +59,8 @@ services:
       - "8080"
 
   web:
-    image: hypervane-web:${HYPERVANE_VERSION:-dev}
-    build:
-      context: ../web
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${HYPERVANE_VERSION:-dev}
+    image: ghcr.io/zypher-systems/hypervane-web:${HYPERVANE_VERSION:-latest}
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "${HYPERVANE_HTTP_PORT:-3000}:80"

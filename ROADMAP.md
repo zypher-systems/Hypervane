@@ -304,7 +304,7 @@ Pro sits between Community and Enterprise. Fleet stays tabled.
 - Community Fedora Cloud 42 and Alpine 3.22 templates. Pro refresh-from-upstream.
 - Scripts category: snapshot a node, backup unprotected, enable QEMU agent, convert to template. Review params, then REST + UPID.
 - Connection token is user + API key (full `user@realm!id=secret` paste still works)
-- Production `api` and `web` images (from 3.3.0, production builds from the GitHub checkout; CI waits until Hypervane is sold)
+- Production Dockerfiles for the api and web images
 - `HYPERVANE_LICENSE_UNLOCK=enterprise` lifted edition gates on a self-hosted host (removed in 3.3.0: paid features come only from a verified license).
 
 ## 3.2.1 UX parity — shipped
@@ -374,6 +374,7 @@ Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by 
 - Insights (`GET /api/insights`, `internal/insights`): quorum, offline nodes, HA errors, last night's backup failures from vzdump logs, stale locks, storage and certificate thresholds, pending restarts, guests outside backup jobs, old snapshots, long-stopped guests, failover memory; viewer-scoped and cached
 - Local admins see only what the connection token may do, with a read-only notice
 - Licensing and edition gates are removed for the open-source release. Audit, long history, MCP, every recipe, and remote migrate are included. There is no license key and no licensing server. `fleet` `sso` `rbac` `mcp_write` are still unbuilt and gate nothing.
+- GitHub Actions publishes linux/amd64 api and web images to ghcr.io. `latest` and `main` track the default branch. A `vX.Y.Z` tag also publishes `X.Y.Z`.
 - Recipes reworked: every recipe plans its exact steps before running (the preview is the plan), validates inputs against the cluster, asks before destructive runs, and reports each run step by step (`/scripts/jobs`). Fixed: Ubuntu images saved as `.img` (Proxmox refuses them for import), Fedora 42 gone from the mirror (now Fedora 44, newest build looked up), re-running a template recipe failing on the earlier download, refresh deleting the template before the download succeeded, SSH keys rejected by Proxmox (form-encoded `+`), containers sent `sshkeys` instead of `ssh-public-keys`. New: Debian 12, Ubuntu 22.04, openSUSE Leap 16.0, Arch, AlmaLinux 10, Rocky 10, CentOS Stream 10, deploy from template, deploy several, check updates, shut down / start a node's guests, move all guests off a node, schedule backups for unprotected guests, clean up old snapshots
 - Fixes found against a live PVE 9 cluster: double-encoded path IDs (task stop, HA, users), 50-line task logs, and response types for cluster config, certificates, APT repositories, LVM, replication status, prune preview, users, OpenID, ACME schema, IPAM status, vzdump defaults; PVE 9 HA groups and datacenter firewall log
 
