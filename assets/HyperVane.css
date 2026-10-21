@@ -1,0 +1,18 @@
+:root {
+  --hv-bg-canvas: #090d16;
+  --hv-surface-card: #131b2e;
+  --hv-surface-hover: #1a253f;
+  --hv-border: #1e293b;
+  --hv-border-active: #334155;
+
+  --hv-accent-cyan: #00e5ff;
+  --hv-accent-indigo: #6366f1;
+  --hv-cyan-glow: rgba(0, 229, 255, 0.18);
+
+  --hv-text-primary: #f8fafc;
+  --hv-text-muted: #94a3b8;
+
+  --hv-status-online: #10b981;
+  --hv-status-alert: #f59e0b;
+  --hv-status-offline: #ef4444;
+}

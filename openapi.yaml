@@ -1,0 +1,975 @@
+openapi: 3.0.3
+info:
+  title: Hypervane API
+  version: 3.1.0
+  description: Backend-for-frontend for a Proxmox VE cluster. Script Library, audit, long history, and read-only MCP.
+servers:
+  - url: /api
+paths:
+  /auth/me:
+    get:
+      summary: Session and setup state
+  /auth/setup:
+    post:
+      summary: First-run admin + cluster token
+  /auth/login:
+    post:
+      summary: Local or PVE user@realm session (TFA challenge when needed)
+  /auth/logout:
+    post:
+      summary: Clear session
+  /auth/realms:
+    get:
+      summary: Local plus PVE realm names for the login form
+  /metrics/guest-iops-latest:
+    get:
+      summary: Latest Hypervane IOPS sample per guest on the active connection
+  /metrics/history:
+    get:
+      summary: Long-retention CPU/memory samples
+  /audit:
+    get:
+      summary: Hypervane mutation audit log
+  /mcp:
+    get:
+      summary: Read-only MCP tool list
+    post:
+      summary: Read-only MCP JSON-RPC
+  /scripts:
+    get:
+      summary: Script Library recipe catalog
+  /scripts/{id}/preview:
+    get:
+      summary: Preview REST steps for a recipe
+  /scripts/{id}/run:
+    post:
+      summary: Run a recipe on a node (returns 202, UPIDs in the task tray)
+  /ws:
+    get:
+      summary: Authenticated live event socket
+  /cluster/summary:
+    get:
+      summary: Cluster status and resources
+  /cluster/nextid:
+    get:
+      summary: Next free VMID
+  /guests:
+    post:
+      summary: Create QEMU or LXC guest (ESXi/OVF import via createArgs and importFrom)
+  /guests/{vmid}:
+    get:
+      summary: Guest status, config, pending
+    put:
+      summary: Update guest config
+    delete:
+      summary: Delete guest (purge, force, destroy-unreferenced-disks)
+  /guests/{vmid}/status/{action}:
+    post:
+      summary: Power action (returns UPID)
+  /guests/{vmid}/snapshots:
+    get:
+      summary: List snapshots
+    post:
+      summary: Create snapshot
+  /guests/{vmid}/snapshots/{name}:
+    put:
+      summary: Update snapshot description
+    delete:
+      summary: Delete snapshot (returns UPID)
+  /guests/{vmid}/snapshots/{name}/rollback:
+    post:
+      summary: Rollback to snapshot (returns UPID)
+  /guests/{vmid}/pending:
+    delete:
+      summary: Revert pending guest config (digest query)
+  /guests/{vmid}/feature:
+    get:
+      summary: Snapshot or clone feature check (404-tolerant)
+  /guests/{vmid}/clone:
+    post:
+      summary: Clone guest (returns UPID)
+  /guests/{vmid}/template:
+    post:
+      summary: Convert guest to template (returns UPID)
+  /guests/{vmid}/migrate:
+    post:
+      summary: Migrate guest (target storage and migration network optional; returns UPID)
+  /guests/{vmid}/remote-migrate:
+    post:
+      summary: Migrate guest to a named remote or target-endpoint (404-tolerant; returns UPID)
+  /guests/{vmid}/cloudinit:
+    get:
+      summary: Cloud-init config
+    put:
+      summary: Update cloud-init fields
+  /guests/{vmid}/cloudinit/dump:
+    get:
+      summary: Dump generated cloud-init (user/network/meta; 404-tolerant)
+  /guests/{vmid}/cloudinit/regenerate:
+    post:
+      summary: Regenerate cloud-init image (404-tolerant; UPID when supported)
+  /guests/{vmid}/agent:
+    get:
+      summary: Aggregated QEMU guest agent status
+  /guests/{vmid}/agent/fstrim:
+    post:
+      summary: Guest agent fstrim
+  /guests/{vmid}/agent/password:
+    post:
+      summary: Set guest user password via agent
+  /guests/{vmid}/agent/{command}:
+    get:
+      summary: Allowlisted guest agent GET (users, exec-status, …)
+    post:
+      summary: Allowlisted guest agent POST (exec, fsfreeze, …)
+  /guests/{vmid}/backup:
+    post:
+      summary: Ad-hoc vzdump (compress, fleecing, bwlimit, mail; returns UPID)
+  /guests/{vmid}/console:
+    get:
+      summary: WebSocket console proxy (VNC, term, or spice; ticket stays on the API)
+  /guests/{vmid}/sendkey:
+    post:
+      summary: Send a key combination to a QEMU guest
+  /guests/{vmid}/monitor:
+    post:
+      summary: Run a QEMU monitor command
+  /guests/{vmid}/disks/resize:
+    post:
+      summary: Grow a guest disk (returns UPID)
+  /guests/{vmid}/disks/move:
+    post:
+      summary: Move a guest disk (format, delete-source, digest; returns UPID)
+  /guests/{vmid}/disks/unlink:
+    post:
+      summary: Unlink a guest disk or unused volume
+  /guests/{vmid}/disks/rescan:
+    post:
+      summary: Rescan guest unused volumes (404-tolerant; UPID when supported)
+  /backups/jobs:
+    get:
+      summary: List scheduled backup jobs
+    post:
+      summary: Create a vzdump backup job (fleecing, mail, node filter, PBS change-detection)
+  /backups/jobs/{id}:
+    get:
+      summary: Read a backup job
+    put:
+      summary: Update a backup job
+    delete:
+      summary: Delete a backup job
+  /backups/jobs/{id}/volumes:
+    get:
+      summary: Included volume tree for a job
+  /backups/coverage:
+    get:
+      summary: Not-backed-up guests and last backup times
+  /backups/restore:
+    post:
+      summary: Restore a guest from a backup volume (returns UPID)
+  /backups/extractconfig:
+    get:
+      summary: Extract guest config from a backup volume
+  /replication:
+    get:
+      summary: List replication jobs
+    post:
+      summary: Create a replication job
+  /replication/{id}:
+    get:
+      summary: Read a replication job
+    put:
+      summary: Update a replication job (remove_job=local|full)
+    delete:
+      summary: Delete a replication job (force, keep query flags)
+  /replication/{id}/status:
+    get:
+      summary: Replication job status
+  /replication/{id}/log:
+    get:
+      summary: Replication job log
+  /replication/{id}/schedule-now:
+    post:
+      summary: Run a replication job now (returns UPID)
+  /storage:
+    get:
+      summary: Cluster storage definitions
+    post:
+      summary: Create a storage plugin (PBS, NFS, CIFS, iSCSI, and others)
+  /storage/{storage}:
+    get:
+      summary: Read a storage plugin config
+    put:
+      summary: Update or disable a storage plugin
+    delete:
+      summary: Delete a storage definition
+  /storage/scan/{kind}:
+    get:
+      summary: Scan NFS, CIFS, iSCSI, LVM, LVM-thin, ZFS, or PBS (404-tolerant)
+  /storage/{storage}/content:
+    get:
+      summary: Browse storage content
+    delete:
+      summary: Delete a volume
+  /storage/{storage}/content/notes:
+    put:
+      summary: Set volume notes (404-tolerant)
+  /storage/{storage}/oci-pull:
+    post:
+      summary: Pull an OCI image onto storage (404-tolerant)
+  /storage/{storage}/identity:
+    get:
+      summary: PBS or encrypted storage identity (404-tolerant)
+    put:
+      summary: Update storage identity (404-tolerant)
+  /storage/{storage}/import-metadata:
+    get:
+      summary: OVA/import metadata for a volume (404-tolerant)
+  /storage/{storage}/query-url-metadata:
+    get:
+      summary: Query URL import metadata (404-tolerant)
+  /storage/{storage}/download-url:
+    post:
+      summary: Download a file from URL onto storage (returns UPID)
+  /storage/{storage}/file-restore:
+    get:
+      summary: List files inside a PBS backup
+  /storage/{storage}/file-restore/download:
+    get:
+      summary: Stream a file from a PBS backup
+  /storage/{storage}/download:
+    get:
+      summary: Stream a backup volume (node + volume query; connection query for cookies)
+  /storage/{storage}/prune:
+    get:
+      summary: Dry-run prune preview
+    delete:
+      summary: Execute prune (returns UPID)
+  /ha/status:
+    get:
+      summary: HA current resource state and manager status
+  /ha/arm:
+    post:
+      summary: Arm the HA stack
+  /ha/disarm:
+    post:
+      summary: Disarm the HA stack (resource-mode freeze or ignore)
+  /ha/resources:
+    get:
+      summary: List HA resources
+    post:
+      summary: Register a guest with the HA manager
+  /ha/resources/{sid}:
+    get:
+      summary: Read an HA resource
+    put:
+      summary: Update HA resource state, group, or limits
+    delete:
+      summary: Unregister an HA resource (purge query flag, default on)
+  /ha/resources/{sid}/migrate:
+    post:
+      summary: Live-migrate an HA resource through the CRM
+  /ha/resources/{sid}/relocate:
+    post:
+      summary: Relocate an HA resource (stop/start) through the CRM
+  /ha/groups:
+    get:
+      summary: List HA groups
+    post:
+      summary: Create an HA group
+  /ha/groups/{group}:
+    get:
+      summary: Read an HA group
+    put:
+      summary: Update an HA group
+    delete:
+      summary: Delete an HA group
+  /ha/rules:
+    get:
+      summary: List HA placement rules (404-tolerant)
+    post:
+      summary: Create an HA rule
+  /ha/rules/{rule}:
+    put:
+      summary: Update an HA rule
+    delete:
+      summary: Delete an HA rule
+  /tasks:
+    get:
+      summary: Cluster or node-archive tasks (node, guest, storage, source)
+  /tasks/{upid}:
+    get:
+      summary: Task status and log
+    delete:
+      summary: Stop a running task
+  /access/users:
+    get:
+      summary: List PVE users
+    post:
+      summary: Create a PVE user
+  /access/users/{userid}:
+    get:
+      summary: Read a PVE user
+    put:
+      summary: Update a PVE user
+    delete:
+      summary: Delete a PVE user
+  /access/users/{userid}/password:
+    put:
+      summary: Set a PVE user password
+  /access/users/{userid}/tokens:
+    get:
+      summary: List API tokens for a user
+    post:
+      summary: Create an API token (secret returned once)
+  /access/users/{userid}/tokens/{tokenid}:
+    put:
+      summary: Update an API token
+    delete:
+      summary: Delete an API token
+  /access/users/{userid}/tfa:
+    get:
+      summary: List TFA entries
+    post:
+      summary: Enroll TOTP or recovery keys
+  /access/users/{userid}/tfa/{id}:
+    delete:
+      summary: Remove a TFA entry
+  /access/groups:
+    get:
+      summary: List groups
+    post:
+      summary: Create a group
+  /access/groups/{group}:
+    get:
+      summary: Read a group
+    put:
+      summary: Update a group
+    delete:
+      summary: Delete a group
+  /access/roles:
+    get:
+      summary: List roles
+    post:
+      summary: Create a role
+  /access/roles/{role}:
+    put:
+      summary: Update a role
+    delete:
+      summary: Delete a role
+  /access/acl:
+    get:
+      summary: List ACL entries
+    put:
+      summary: Add or remove an ACL entry
+  /access/realms:
+    get:
+      summary: List authentication realms
+    post:
+      summary: Create a realm
+  /access/realms/{realm}:
+    get:
+      summary: Read a realm
+    put:
+      summary: Update a realm
+    delete:
+      summary: Delete a realm
+  /access/realms/{realm}/sync:
+    post:
+      summary: Sync an LDAP/AD realm (UPID, 404-tolerant)
+  /firewall/dc/rules:
+    get:
+      summary: Datacenter firewall rules
+    post:
+      summary: Create a datacenter firewall rule
+  /firewall/dc/rules/{pos}:
+    put:
+      summary: Update a datacenter firewall rule
+    delete:
+      summary: Delete a datacenter firewall rule
+  /firewall/dc/options:
+    get:
+      summary: Datacenter firewall options
+    put:
+      summary: Update datacenter firewall options
+  /firewall/dc/log:
+    get:
+      summary: Datacenter firewall log
+  /firewall/dc/aliases:
+    get:
+      summary: Datacenter aliases
+    post:
+      summary: Create an alias
+  /firewall/dc/ipset:
+    get:
+      summary: Datacenter IP sets
+    post:
+      summary: Create an IP set
+  /firewall/dc/macros:
+    get:
+      summary: Firewall macros
+  /firewall/dc/refs:
+    get:
+      summary: Firewall refs (404-tolerant)
+  /firewall/dc/groups:
+    get:
+      summary: Security groups
+    post:
+      summary: Create a security group
+  /firewall/nodes/{node}/rules:
+    get:
+      summary: Node firewall rules
+    post:
+      summary: Create a node firewall rule
+  /firewall/nodes/{node}/options:
+    get:
+      summary: Node firewall options
+    put:
+      summary: Update node firewall options
+  /firewall/nodes/{node}/log:
+    get:
+      summary: Node firewall log
+  /firewall/guests/{vmid}/rules:
+    get:
+      summary: Guest firewall rules
+    post:
+      summary: Create a guest firewall rule
+  /firewall/guests/{vmid}/options:
+    get:
+      summary: Guest firewall options
+    put:
+      summary: Update guest firewall options
+  /firewall/guests/{vmid}/log:
+    get:
+      summary: Guest firewall log
+  /firewall/guests/{vmid}/aliases:
+    get:
+      summary: Guest aliases
+    post:
+      summary: Create a guest alias
+  /firewall/guests/{vmid}/ipset:
+    get:
+      summary: Guest IP sets
+    post:
+      summary: Create a guest IP set
+  /firewall/guests/{vmid}/refs:
+    get:
+      summary: Guest firewall refs (404-tolerant)
+  /nodes/{node}/network:
+    get:
+      summary: Node network interfaces
+    post:
+      summary: Create a node network interface
+  /nodes/{node}/network/apply:
+    put:
+      summary: Apply pending node network (UPID)
+  /nodes/{node}/network/revert:
+    delete:
+      summary: Revert pending node network
+  /nodes/{node}/hardware/pci/{id}/mdev:
+    get:
+      summary: Mediated device types for a PCI id or mapping (404-tolerant)
+  /nodes/{node}/hardware/{kind}:
+    get:
+      summary: Node PCI or USB inventory (404-tolerant)
+  /nodes/{node}/report:
+    get:
+      summary: Node system report (404-tolerant)
+  /nodes/{node}/wakeonlan:
+    post:
+      summary: Wake the node over LAN (404-tolerant)
+  /nodes/{node}/config:
+    get:
+      summary: Node config including description
+    put:
+      summary: Update node description / notes
+  /nodes/{node}/aplinfo:
+    get:
+      summary: Appliance templates (404-tolerant)
+  /nodes/{node}/guests/{action}:
+    post:
+      summary: Node startall, stopall, suspendall, or migrateall (storage/network extras on migrateall; UPID)
+  /nodes/{node}/disks:
+    get:
+      summary: Physical disks
+  /nodes/{node}/disks/initgpt:
+    post:
+      summary: Initialize an unused disk with GPT (UPID)
+  /nodes/{node}/disks/zfs/import:
+    post:
+      summary: Import a ZFS pool by name or device (404-tolerant, UPID)
+  /nodes/{node}/disks/zfs/{name}:
+    get:
+      summary: ZFS pool status (404-tolerant)
+  /nodes/{node}/disks/zfs/{name}/scrub:
+    post:
+      summary: Start a ZFS scrub (404-tolerant, UPID)
+  /nodes/{node}/apt:
+    get:
+      summary: Available APT updates
+  /nodes/{node}/apt/upgrade-session:
+    post:
+      summary: Exchange the node root password for a one-time upgrade terminal. The password is not stored.
+  /nodes/{node}/services:
+    get:
+      summary: Node services
+  /nodes/{node}/dns:
+    get:
+      summary: Node DNS
+    put:
+      summary: Update node DNS
+  /nodes/{node}/journal:
+    get:
+      summary: Node journal or syslog
+  /nodes/{node}/certificates:
+    get:
+      summary: Node certificates
+  /nodes/{node}/execute:
+    post:
+      summary: Run a JSON batch of node-local API calls
+  /nodes/{node}/status/{command}:
+    post:
+      summary: Reboot or shutdown a node (UPID)
+  /datacenter/options:
+    get:
+      summary: Cluster options
+    put:
+      summary: Update cluster options
+  /datacenter/pools:
+    get:
+      summary: Resource pools
+    post:
+      summary: Create a pool
+  /datacenter/acme/accounts:
+    get:
+      summary: ACME accounts (404-tolerant)
+    post:
+      summary: Create an ACME account (UPID)
+  /datacenter/acme/accounts/{name}:
+    put:
+      summary: Update an ACME account (UPID)
+    delete:
+      summary: Delete an ACME account
+  /datacenter/acme/plugins:
+    get:
+      summary: ACME plugins
+    post:
+      summary: Create an ACME plugin
+  /datacenter/acme/plugins/{id}:
+    put:
+      summary: Update an ACME plugin
+    delete:
+      summary: Delete an ACME plugin
+  /datacenter/notifications/endpoints/{kind}:
+    get:
+      summary: Notification endpoints (404-tolerant)
+    post:
+      summary: Create a notification endpoint
+  /datacenter/notifications/endpoints/{kind}/{name}:
+    put:
+      summary: Update a notification endpoint
+    delete:
+      summary: Delete a notification endpoint
+  /datacenter/notifications/matchers:
+    get:
+      summary: Notification matchers
+    post:
+      summary: Create a matcher
+  /datacenter/notifications/matchers/{name}:
+    put:
+      summary: Update a matcher
+    delete:
+      summary: Delete a matcher
+  /datacenter/acme/directories:
+    get:
+      summary: ACME directory list (404-tolerant)
+  /datacenter/acme/meta:
+    get:
+      summary: ACME directory metadata (404-tolerant)
+  /datacenter/acme/tos:
+    get:
+      summary: ACME terms of service URL (404-tolerant)
+  /datacenter/acme/challenge-schema:
+    get:
+      summary: ACME DNS challenge schema (404-tolerant)
+  /datacenter/notifications/targets:
+    get:
+      summary: Notification targets
+  /datacenter/notifications/targets/{name}/test:
+    post:
+      summary: Test a notification target (404-tolerant)
+  /datacenter/metrics/servers:
+    get:
+      summary: Metric servers (404-tolerant)
+    post:
+      summary: Create a metric server
+  /datacenter/metrics/servers/{id}:
+    put:
+      summary: Update a metric server
+    delete:
+      summary: Delete a metric server
+  /datacenter/log:
+    get:
+      summary: Cluster log (404-tolerant)
+  /datacenter/jobs:
+    get:
+      summary: Cluster jobs index (404-tolerant)
+  /datacenter/jobs/realm-sync:
+    get:
+      summary: Realm-sync job schedules
+    post:
+      summary: Create a realm-sync job
+  /datacenter/jobs/realm-sync/{id}:
+    put:
+      summary: Update a realm-sync job
+    delete:
+      summary: Delete a realm-sync job
+  /datacenter/jobs/schedule-analyze:
+    get:
+      summary: Analyze a cron schedule (404-tolerant)
+  /datacenter/cpu-models:
+    get:
+      summary: Custom CPU models (404-tolerant)
+    post:
+      summary: Create a custom CPU model
+  /datacenter/cpu-models/{name}:
+    put:
+      summary: Update a custom CPU model
+    delete:
+      summary: Delete a custom CPU model
+  /nodes/{node}/vzdump/defaults:
+    get:
+      summary: Effective vzdump defaults (404-tolerant)
+    put:
+      summary: Update vzdump defaults when PVE supports it (404-tolerant)
+  /access/users/{userid}/unlock-tfa:
+    put:
+      summary: Unlock a user's TFA
+  /access/openid:
+    get:
+      summary: OpenID helper metadata (404-tolerant)
+  /datacenter/cluster:
+    get:
+      summary: Corosync cluster config
+    post:
+      summary: Create a cluster
+  /datacenter/cluster/totem:
+    put:
+      summary: Update corosync totem / links (membership-sensitive; 404-tolerant)
+  /datacenter/remotes:
+    get:
+      summary: Configured PVE remotes for remote_migrate (404-tolerant)
+    post:
+      summary: Create a PVE remote (404-tolerant)
+  /datacenter/remotes/{id}:
+    put:
+      summary: Update a PVE remote (404-tolerant)
+    delete:
+      summary: Delete a PVE remote (404-tolerant)
+  /datacenter/cluster/join:
+    get:
+      summary: Join information (404-tolerant)
+    post:
+      summary: Join an existing cluster
+  /datacenter/cluster/nodes:
+    get:
+      summary: Cluster member nodes
+    post:
+      summary: Add a cluster node
+  /datacenter/cluster/nodes/{node}:
+    delete:
+      summary: Remove a cluster node
+  /datacenter/cluster/qdevice:
+    get:
+      summary: QDevice status (404-tolerant)
+    post:
+      summary: Create a QDevice
+    delete:
+      summary: Destroy the QDevice
+  /datacenter/mapping/{kind}:
+    get:
+      summary: PCI, USB, or directory mappings
+    post:
+      summary: Create a mapping
+  /datacenter/mapping/{kind}/{id}:
+    put:
+      summary: Update a mapping
+    delete:
+      summary: Delete a mapping
+  /sdn:
+    get:
+      summary: SDN status and pending (404-tolerant, supported=false when SDN is not installed)
+  /sdn/apply:
+    put:
+      summary: Apply pending SDN configuration (UPID)
+  /sdn/rollback:
+    delete:
+      summary: Rollback pending SDN if the cluster supports it
+  /sdn/dry-run:
+    get:
+      summary: Dry-run SDN apply diffs (404-tolerant)
+  /sdn/lock:
+    post:
+      summary: Acquire SDN config lock (404-tolerant)
+    delete:
+      summary: Release SDN config lock (404-tolerant)
+  /sdn/zones:
+    get:
+      summary: SDN zones
+    post:
+      summary: Create an SDN zone
+  /sdn/zones/{zone}:
+    put:
+      summary: Update an SDN zone
+    delete:
+      summary: Delete an SDN zone
+  /sdn/vnets:
+    get:
+      summary: SDN VNets
+    post:
+      summary: Create a VNet
+  /sdn/vnets/{vnet}:
+    put:
+      summary: Update a VNet
+    delete:
+      summary: Delete a VNet
+  /sdn/vnets/{vnet}/subnets:
+    get:
+      summary: VNet subnets
+    post:
+      summary: Create a subnet
+    put:
+      summary: Update a subnet (subnet query)
+    delete:
+      summary: Delete a subnet (subnet query)
+  /sdn/vnets/{vnet}/ips:
+    get:
+      summary: VNet IP mappings when IPAM is present (404-tolerant)
+    post:
+      summary: Create a VNet IP mapping (404-tolerant)
+    delete:
+      summary: Delete a VNet IP mapping (404-tolerant)
+  /sdn/vnets/{vnet}/firewall/rules:
+    get:
+      summary: VNet firewall rules
+    post:
+      summary: Create a VNet firewall rule
+  /sdn/vnets/{vnet}/firewall/options:
+    get:
+      summary: VNet firewall options
+    put:
+      summary: Update VNet firewall options
+  /sdn/vnets/{vnet}/firewall/log:
+    get:
+      summary: VNet firewall log
+  /sdn/controllers:
+    get:
+      summary: SDN controllers
+    post:
+      summary: Create a controller
+  /sdn/ipams:
+    get:
+      summary: SDN IPAM plugins
+    post:
+      summary: Create an IPAM
+  /sdn/ipams/{id}/status:
+    get:
+      summary: IPAM plugin status (404-tolerant)
+  /sdn/dns:
+    get:
+      summary: SDN DNS plugins
+    post:
+      summary: Create a DNS plugin
+  /sdn/fabrics:
+    get:
+      summary: SDN fabrics (404-tolerant)
+    post:
+      summary: Create a fabric
+  /sdn/fabrics/{id}/nodes:
+    get:
+      summary: Fabric nodes (404-tolerant)
+    post:
+      summary: Add a fabric node
+  /sdn/fabrics/{id}/nodes/{node}:
+    put:
+      summary: Update a fabric node (interfaces, IP)
+    delete:
+      summary: Remove a fabric node
+  /sdn/fabrics/{id}/routemaps:
+    get:
+      summary: Fabric route maps (404-tolerant)
+  /sdn/fabrics/{id}/prefixlists:
+    get:
+      summary: Fabric prefix lists (404-tolerant)
+  /sdn/nodes/{node}:
+    get:
+      summary: Node SDN runtime zones, neighbors, and routes (404-tolerant)
+  /sdn/nodes/{node}/fabrics/{id}/interfaces:
+    get:
+      summary: Fabric interfaces on a node (404-tolerant)
+  /sdn/route-maps:
+    get:
+      summary: Global SDN route maps (404-tolerant)
+    post:
+      summary: Create a route map
+  /sdn/route-maps/{id}:
+    delete:
+      summary: Delete a route map
+  /sdn/route-maps/{id}/entries:
+    get:
+      summary: Route map entries (404-tolerant)
+    post:
+      summary: Create a route map entry
+  /sdn/route-maps/{id}/entries/{order}:
+    put:
+      summary: Update a route map entry
+    delete:
+      summary: Delete a route map entry
+  /sdn/prefix-lists:
+    get:
+      summary: Global SDN prefix lists (404-tolerant)
+    post:
+      summary: Create a prefix list
+  /sdn/prefix-lists/{id}:
+    put:
+      summary: Update a prefix list
+    delete:
+      summary: Delete a prefix list
+  /sdn/prefix-lists/{id}/entries:
+    get:
+      summary: Prefix list entries (404-tolerant)
+    post:
+      summary: Create a prefix list entry
+  /sdn/prefix-lists/{id}/entries/{seq}:
+    put:
+      summary: Update a prefix list entry
+    delete:
+      summary: Delete a prefix list entry
+  /ceph:
+    get:
+      summary: Ceph status (supported=false when not installed)
+  /ceph/flags:
+    get:
+      summary: Ceph cluster flags
+    put:
+      summary: Update Ceph flags
+  /ceph/config:
+    get:
+      summary: ceph.conf dump
+  /ceph/crush:
+    get:
+      summary: CRUSH map
+    put:
+      summary: Replace CRUSH map
+  /ceph/rules:
+    get:
+      summary: CRUSH rules
+    post:
+      summary: Create a CRUSH rule
+  /ceph/log:
+    get:
+      summary: Ceph log
+  /ceph/metadata:
+    get:
+      summary: Cluster Ceph metadata (mgr/mon/osd)
+  /ceph/cmd-safety:
+    get:
+      summary: Heuristic check if stop/destroy is safe (404-tolerant)
+  /ceph/releases:
+    get:
+      summary: Available Ceph releases (404-tolerant)
+  /ceph/restart-bulk:
+    post:
+      summary: Cluster-wide rolling Ceph restart (UPID)
+  /ceph/restart:
+    post:
+      summary: Restart Ceph services (UPID)
+  /ceph/start:
+    post:
+      summary: Start Ceph services (UPID)
+  /ceph/stop:
+    post:
+      summary: Stop Ceph services (UPID)
+  /ceph/rgw:
+    get:
+      summary: Ceph RGW instances (404-tolerant)
+    post:
+      summary: Create an RGW instance when the cluster supports it (UPID)
+  /ceph/rgw/users:
+    get:
+      summary: RGW object-store users (404-tolerant)
+    post:
+      summary: Create an RGW user
+  /ceph/rgw/users/{uid}:
+    delete:
+      summary: Delete an RGW user
+  /ceph/rgw/{id}:
+    delete:
+      summary: Destroy an RGW instance (UPID)
+  /ceph/mons:
+    get:
+      summary: Ceph monitors
+    post:
+      summary: Create a monitor (UPID)
+  /ceph/mgrs:
+    get:
+      summary: Ceph managers
+    post:
+      summary: Create a manager (UPID)
+  /ceph/mds:
+    get:
+      summary: Ceph metadata servers
+    post:
+      summary: Create an MDS (UPID)
+  /ceph/osds:
+    get:
+      summary: Ceph OSDs
+  /ceph/osds/{osdid}/in:
+    post:
+      summary: Mark OSD in (UPID)
+  /ceph/osds/{osdid}/out:
+    post:
+      summary: Mark OSD out (UPID)
+  /ceph/osds/{osdid}/scrub:
+    post:
+      summary: Scrub or deep-scrub an OSD (UPID)
+  /ceph/osds/{osdid}/destroy:
+    post:
+      summary: Destroy an OSD (UPID)
+  /ceph/osds/{osdid}/metadata:
+    get:
+      summary: OSD metadata (404-tolerant)
+  /ceph/osds/{osdid}/lv-info:
+    get:
+      summary: OSD LV info (404-tolerant)
+  /ceph/pools:
+    get:
+      summary: Ceph pools
+    post:
+      summary: Create a pool (UPID)
+  /ceph/pools/{pool}/status:
+    get:
+      summary: Pool status dump (404-tolerant)
+  /ceph/fs:
+    get:
+      summary: CephFS filesystems (404-tolerant)
+    post:
+      summary: Create a CephFS (UPID)
+  /nodes/{node}/ceph:
+    get:
+      summary: Node-scoped Ceph status
+  /nodes/{node}/ceph/restart-bulk:
+    post:
+      summary: Node OSD rolling restart (UPID)
+  /nodes/{node}/ceph/install:
+    post:
+      summary: Install Ceph packages (UPID)
+  /nodes/{node}/ceph/init:
+    post:
+      summary: Initialize Ceph on a node (UPID)
+  /nodes/{node}/ceph/osd:
+    post:
+      summary: Create an OSD from a disk (UPID)
+  /nodes/{node}/ceph/log:
+    get:
+      summary: Node Ceph log

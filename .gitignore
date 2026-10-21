@@ -1,0 +1,17 @@
+.env
+.env.local
+*.log
+tmp/
+bin/
+dist/
+node_modules/
+web/dist/
+api/tmp/
+.DS_Store
+coverage/
+*.exe
+*.test
+.idea/
+.vscode/
+api/.license-private
+.license-private

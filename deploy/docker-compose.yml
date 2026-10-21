@@ -1,0 +1,87 @@
+# Production stack, built from a checkout of github.com/zypher-systems/hypervane.
+# Run from the repository root, with a .env there (see .env.example):
+#
+#   git checkout v3.3.0
+#   HYPERVANE_VERSION=$(git describe --tags --always) \
+#     docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d --build
+#
+# To update: git fetch --tags, check out the new tag, and run the same command.
+# Always keep -p hypervane: without it the stack is named after this folder
+# ("deploy") and starts beside yours with an empty database. Keep --env-file
+# too: Compose would otherwise look for deploy/.env.
+# HYPERVANE_VERSION is the version baked into the images; without it the build says "dev".
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hypervane
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: hypervane
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hypervane -d hypervane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: hypervane-api:${HYPERVANE_VERSION:-dev}
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${HYPERVANE_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://hypervane:${POSTGRES_PASSWORD}@postgres:5432/hypervane?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      HYPERVANE_HTTP_ADDR: :8080
+      HYPERVANE_COOKIE_SECURE: ${HYPERVANE_COOKIE_SECURE:-true}
+      HYPERVANE_MASTER_KEY: ${HYPERVANE_MASTER_KEY:?set HYPERVANE_MASTER_KEY to a long random secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    expose:
+      - "8080"
+
+  web:
+    image: hypervane-web:${HYPERVANE_VERSION:-dev}
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${HYPERVANE_VERSION:-dev}
+    restart: unless-stopped
+    ports:
+      - "${HYPERVANE_HTTP_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

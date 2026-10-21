@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --hv-canvas: 15 17 21;
+  --hv-sidebar: 18 21 26;
+  --hv-panel: 21 24 30;
+  --hv-raised: 28 32 39;
+  --hv-line: 31 36 43;
+  --hv-ink: 231 233 238;
+  --hv-ink-dim: 154 161 173;
+  --hv-ink-faint: 124 132 145;
+  --hv-accent: 232 112 58;
+  --hv-accent-dim: 196 90 42;
+  --hv-accent-ink: 26 13 5;
+  --hv-ok: 63 182 139;
+  --hv-warn: 217 164 65;
+  --hv-danger: 240 133 122;
+  --hv-meter: 201 206 214;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: rgb(var(--hv-canvas));
+  color: rgb(var(--hv-ink));
+}
+
+.hv-glass {
+  background: rgb(var(--hv-panel));
+  border-color: rgb(var(--hv-line));
+}
+
+.hv-form-stack .hv-glass {
+  background: rgb(8 10 14 / 0.88);
+  border-color: rgb(255 255 255 / 0.16);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+.hv-form-stack h3 {
+  color: rgb(var(--hv-ink));
+  letter-spacing: 0.04em;
+}
+
+.hv-form-stack thead {
+  background: rgb(0 0 0 / 0.28);
+  color: rgb(var(--hv-ink-faint));
+}
+
+select,
+select option {
+  background-color: rgb(var(--hv-canvas));
+  color: rgb(var(--hv-ink));
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--hv-raised));
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.xterm,
+.xterm-viewport {
+  background: transparent !important;
+}
+
+.hv-vnc canvas {
+  cursor: default !important;
+}
+
+.u-legend,
+.u-cursor-pt {
+  display: none !important;
+}
