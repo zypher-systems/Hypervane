@@ -90,29 +90,3 @@ jobs:
           build-args: VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-
-  public:
-    if: github.event_name == 'push'
-    needs: publish
-    runs-on: ubuntu-24.04
-    permissions:
-      packages: write
-    steps:
-      - name: Make the packages public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          pub() {
-            local name="$1" i
-            for i in 1 2 3 4 5 6; do
-              if gh api --method PATCH "/user/packages/container/${name}" -f visibility=public; then
-                return 0
-              fi
-              sleep 10
-            done
-            echo "could not make ${name} public" >&2
-            return 1
-          }
-          pub hypervane-api
-          pub hypervane-web
