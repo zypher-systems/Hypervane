@@ -1,13 +1,18 @@
 # Production stack. Images are published to ghcr.io by GitHub Actions.
 # Run from the repository root, with a .env there (see .env.example):
 #
-#   docker compose -p hypervane --env-file .env -f deploy/docker-compose.yml up -d
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d
+#
+# Or copy this file on its own to compose.yaml beside a .env and run
+# docker compose up -d there (see the README).
 #
 # HYPERVANE_VERSION picks the image tag. It defaults to latest, which tracks
 # main. A release tag vX.Y.Z is also published as X.Y.Z.
-# Always keep -p hypervane: without it the stack is named after this folder
-# ("deploy") and starts beside yours with an empty database. Keep --env-file
-# too: Compose would otherwise look for deploy/.env.
+# The project name is fixed to hypervane, so the database volume is always
+# hypervane_pgdata wherever this file is run from. From a checkout, keep
+# --env-file: Compose would otherwise look for deploy/.env.
+
+name: hypervane
 
 services:
   postgres:
