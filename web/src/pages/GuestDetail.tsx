@@ -30,7 +30,7 @@ import { useCan } from "@/lib/perms";
 import { bytes, cpuMeterLabel, cpuPct, daysSince, formatWhen, uptime } from "@/lib/format";
 import { getActiveConnection } from "@/lib/connection";
 import { InsightsList } from "@/components/insights/InsightsList";
-import { live } from "@/lib/ws";
+import { useActiveConnection, useLiveTopic } from "@/lib/liveTopic";
 import type { GuestStatus, Insight, Resource } from "@/types";
 import { haSid, haTone } from "@/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -368,19 +368,11 @@ export function GuestDetailPage() {
   const [editNotes, setEditNotes] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesError, setNotesError] = useState("");
+  const connection = useActiveConnection();
   useEffect(() => {
     setLiveStatus(null);
-    if (!node) return;
-    const topic = `guest:${node}:${type}:${id}`;
-    live.subscribe([topic]);
-    const off = live.on((t, data) => {
-      if (t === topic) setLiveStatus(data as GuestStatus);
-    });
-    return () => {
-      off();
-      live.unsubscribe([topic]);
-    };
-  }, [node, type, id]);
+  }, [node, type, id, connection]);
+  useLiveTopic(node ? `guest:${node}:${type}:${id}` : null, (data) => setLiveStatus(data as GuestStatus));
 
   useEffect(() => {
     setDialog(null);

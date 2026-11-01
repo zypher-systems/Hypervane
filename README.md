@@ -110,6 +110,8 @@ You can also set these in `.env`:
 | `HYPERVANE_VERSION` | `latest` | Image tag to run: `latest`, `main`, `X.Y.Z` or `sha-<commit>`. |
 | `HYPERVANE_COOKIE_SECURE` | `true` | Marks session cookies secure, so sign-in only works over HTTPS. Put a TLS reverse proxy in front of the port, or set `false` to use plain HTTP on a trusted network. |
 
+Failed sign-ins are limited per client address and per account. A reverse proxy on a private network must pass the client's address in `X-Forwarded-For`, as Caddy, Traefik and nginx can. A proxy on a public address looks like one client to Hypervane, so everyone behind it shares that client's limit.
+
 Start it:
 
 ```bash

@@ -54,6 +54,10 @@ export function finishTask(upid: string): TaskQueryKey[] | null {
   return cur.keys;
 }
 
+export function clearPendingTasks() {
+  pending.clear();
+}
+
 export function isTaskFinished(t: { status?: string; endtime?: number; exitstatus?: string }) {
   if (t.exitstatus) return true;
   if (t.endtime) return true;

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -48,6 +49,8 @@ type Server struct {
 	upgradeMu     sync.Mutex
 	upgradeGrants map[string]upgradeGrant
 	upgradeFails  map[string][]time.Time
+
+	logins loginLimiter
 }
 
 func New(cfg config.Config, st *store.Store, box *crypto.Box, h *hub.Hub, p *poller.Poller) *Server {
@@ -81,20 +84,6 @@ func (s *Server) removeClient(id string) {
 			break
 		}
 	}
-}
-
-func (s *Server) Client() *pve.Client {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.defaultID != "" {
-		if c := s.clients[s.defaultID]; c != nil {
-			return c
-		}
-	}
-	for _, c := range s.clients {
-		return c
-	}
-	return nil
 }
 
 func (s *Server) ClientByID(id string) *pve.Client {
@@ -180,8 +169,8 @@ func (s *Server) Router() http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/auth/me", s.handleMe)
 		r.Get("/auth/realms", s.handleAuthRealms)
-		r.Post("/auth/setup", s.handleSetup)
-		r.Post("/auth/login", s.handleLogin)
+		r.With(middleware.RequestSize(authBodyLimit)).Post("/auth/setup", s.handleSetup)
+		r.With(middleware.RequestSize(authBodyLimit)).Post("/auth/login", s.handleLogin)
 		r.Post("/auth/logout", s.handleLogout)
 
 		r.Group(func(r chi.Router) {
@@ -753,7 +742,8 @@ func urlParam(r *http.Request, key string) string {
 func (s *Server) requestConnectionID(r *http.Request) string {
 	user, _ := r.Context().Value(userKey).(store.User)
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
-	if user.Kind == store.UserKindPVE && sess.ConnectionID != "" {
+	if user.Kind == store.UserKindPVE {
+		// A Proxmox session belongs to the cluster that issued its ticket.
 		return sess.ConnectionID
 	}
 	if id := strings.TrimSpace(r.Header.Get("X-Hypervane-Connection")); id != "" {
@@ -765,14 +755,26 @@ func (s *Server) requestConnectionID(r *http.Request) string {
 	return s.DefaultConnectionID()
 }
 
-func (s *Server) pveOrError(w http.ResponseWriter, r *http.Request) *pve.Client {
+// connectionOrError resolves the connection a request targets. A named
+// connection that is disabled or gone is an error: running the request against
+// another cluster instead could change the wrong machines.
+func (s *Server) connectionOrError(w http.ResponseWriter, r *http.Request) (string, *pve.Client) {
 	id := s.requestConnectionID(r)
-	base := s.ClientByID(id)
-	if base == nil {
-		base = s.Client()
-	}
-	if base == nil {
+	if id == "" {
 		writeError(w, http.StatusServiceUnavailable, "cluster is not configured")
+		return "", nil
+	}
+	c := s.ClientByID(id)
+	if c == nil {
+		writeError(w, http.StatusServiceUnavailable, "connection is unavailable")
+		return "", nil
+	}
+	return id, c
+}
+
+func (s *Server) pveOrError(w http.ResponseWriter, r *http.Request) *pve.Client {
+	_, base := s.connectionOrError(w, r)
+	if base == nil {
 		return nil
 	}
 	user, _ := r.Context().Value(userKey).(store.User)
@@ -791,9 +793,6 @@ func (s *Server) pveOrError(w http.ResponseWriter, r *http.Request) *pve.Client 
 
 func (s *Server) ticketClient(ctx context.Context, sess store.Session, user store.User) (*pve.Client, error) {
 	base := s.ClientByID(sess.ConnectionID)
-	if base == nil {
-		base = s.Client()
-	}
 	if base == nil {
 		return nil, store.ErrNotFound
 	}
@@ -870,6 +869,15 @@ func writePVEError(w http.ResponseWriter, err error) {
 
 func decodeJSON(r *http.Request, dest any) error {
 	return json.NewDecoder(r.Body).Decode(dest)
+}
+
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "invalid json")
 }
 
 func queryFlag(r *http.Request, key string) bool {

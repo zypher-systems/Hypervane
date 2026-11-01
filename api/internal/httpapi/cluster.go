@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"hypervane/internal/pve"
@@ -27,12 +28,10 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if acl, filter := s.requestACL(r); filter {
-		resources = pve.FilterResources(resources, acl)
-	}
+	acl, _ := s.requestACL(r)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":    status,
-		"resources": resources,
+		"status":    pve.FilterStatus(status, acl),
+		"resources": pve.FilterResources(resources, acl),
 	})
 }
 
@@ -124,14 +123,22 @@ func (s *Server) handleGuestIOPSLatest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"samples": map[string]any{}})
 		return
 	}
-	rows, err := s.store.LatestGuestIOPS(r.Context(), s.requestConnectionID(r))
+	conn, c := s.connectionOrError(w, r)
+	if c == nil {
+		return
+	}
+	rows, err := s.store.LatestGuestIOPS(r.Context(), conn)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	acl, _ := s.requestACL(r)
 	samples := map[string]map[string]float64{}
 	for vmid, p := range rows {
-		samples[strconv.Itoa(vmid)] = map[string]float64{"rd": p.Rd, "wr": p.Wr, "wait": p.Wait}
+		id := strconv.Itoa(vmid)
+		if pve.CanSeeResourceID("qemu/"+id, acl) {
+			samples[id] = map[string]float64{"rd": p.Rd, "wr": p.Wr, "wait": p.Wait}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"samples": samples})
 }
@@ -146,7 +153,17 @@ func (s *Server) handleRing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid key")
 		return
 	}
-	ring, err := s.poller.Ring(r.Context(), "hypervane:"+s.requestConnectionID(r)+":ring:"+key)
+	conn, c := s.connectionOrError(w, r)
+	if c == nil {
+		return
+	}
+	// Ring keys are "<type>:<resource id>".
+	_, resource, _ := strings.Cut(key, ":")
+	if acl, _ := s.requestACL(r); !pve.CanSeeResourceID(resource, acl) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	ring, err := s.poller.Ring(r.Context(), "hypervane:"+conn+":ring:"+key)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

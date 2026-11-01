@@ -4,12 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
 
 const RedisChannel = "hypervane:events"
+
+const (
+	eventRevoke = "revoke"
+
+	// ScopePrefix starts every topic made by ScopedTopic.
+	ScopePrefix = "conn:"
+)
+
+// ScopedTopic names a detail topic on one connection. Node names, VMIDs and
+// UPIDs are only unique within a cluster, so they are never published bare.
+func ScopedTopic(connection, detail string) string {
+	return ScopePrefix + connection + ":" + detail
+}
+
+// SplitTopic undoes ScopedTopic.
+func SplitTopic(topic string) (connection, detail string, ok bool) {
+	rest, found := strings.CutPrefix(topic, ScopePrefix)
+	if !found {
+		return "", "", false
+	}
+	connection, detail, found = strings.Cut(rest, ":")
+	if !found || connection == "" || detail == "" {
+		return "", "", false
+	}
+	return connection, detail, true
+}
 
 type Event struct {
 	Type  string `json:"type"`
@@ -24,15 +51,17 @@ type client struct {
 }
 
 type Hub struct {
-	mu      sync.RWMutex
-	clients map[*client]struct{}
-	rdb     *redis.Client
+	mu       sync.RWMutex
+	clients  map[*client]struct{}
+	sessions map[string]map[chan struct{}]struct{}
+	rdb      *redis.Client
 }
 
 func New(rdb *redis.Client) *Hub {
 	return &Hub{
-		clients: make(map[*client]struct{}),
-		rdb:     rdb,
+		clients:  make(map[*client]struct{}),
+		sessions: make(map[string]map[chan struct{}]struct{}),
+		rdb:      rdb,
 	}
 }
 
@@ -61,7 +90,45 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) Publish(ctx context.Context, topic string, data any) {
-	ev := Event{Type: "event", Topic: topic, Data: data}
+	h.emit(ctx, Event{Type: "event", Topic: topic, Data: data})
+}
+
+// RevokeSession tells every socket held open by a session to close, on every
+// API instance.
+func (h *Hub) RevokeSession(ctx context.Context, sessionID string) {
+	h.emit(ctx, Event{Type: eventRevoke, Topic: sessionID})
+}
+
+// WatchSession returns a channel that closes when the session is revoked. The
+// returned func stops watching.
+func (h *Hub) WatchSession(sessionID string) (<-chan struct{}, func()) {
+	ch := make(chan struct{})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.sessions[sessionID] == nil {
+		h.sessions[sessionID] = make(map[chan struct{}]struct{})
+	}
+	h.sessions[sessionID][ch] = struct{}{}
+	return ch, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		delete(h.sessions[sessionID], ch)
+		if len(h.sessions[sessionID]) == 0 {
+			delete(h.sessions, sessionID)
+		}
+	}
+}
+
+func (h *Hub) revoke(sessionID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.sessions[sessionID] {
+		close(ch)
+	}
+	delete(h.sessions, sessionID)
+}
+
+func (h *Hub) emit(ctx context.Context, ev Event) {
 	raw, err := json.Marshal(ev)
 	if err != nil {
 		return
@@ -77,6 +144,10 @@ func (h *Hub) Publish(ctx context.Context, topic string, data any) {
 }
 
 func (h *Hub) dispatch(ev Event) {
+	if ev.Type == eventRevoke {
+		h.revoke(ev.Topic)
+		return
+	}
 	raw, err := json.Marshal(ev)
 	if err != nil {
 		return

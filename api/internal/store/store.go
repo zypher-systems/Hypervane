@@ -200,9 +200,15 @@ func (s *Store) SessionByTokenHash(ctx context.Context, tokenHash string) (Sessi
 	return sess, nil
 }
 
-func (s *Store) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`)
-	return err
+// DeleteSessionByTokenHash ends a session and returns its ID. It returns
+// ErrNotFound when no such session exists.
+func (s *Store) DeleteSessionByTokenHash(ctx context.Context, tokenHash string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `DELETE FROM sessions WHERE token_hash = $1 RETURNING id`, tokenHash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return id, err
 }
 
 func (s *Store) UpsertCluster(ctx context.Context, cfg ClusterConfig) error {

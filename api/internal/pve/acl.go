@@ -129,6 +129,44 @@ func FilterResources(resources []Resource, acl ACL) []Resource {
 	return out
 }
 
+// FilterStatus keeps the cluster summary and the nodes the ACL can see. Node
+// entries carry addresses that /cluster/status only gives to Sys.Audit holders.
+func FilterStatus(status []ClusterStatus, acl ACL) []ClusterStatus {
+	if acl == nil {
+		return status
+	}
+	out := make([]ClusterStatus, 0, len(status))
+	for _, st := range status {
+		if st.Type != "node" || acl.CanSee("/nodes/"+st.Name) {
+			out = append(out, st)
+		}
+	}
+	return out
+}
+
+// CanSeeResourceID reports whether the ACL covers a /cluster/resources id such
+// as "qemu/100", "node/pve1" or "storage/pve1/local". Any other shape needs
+// access at the root.
+func CanSeeResourceID(id string, acl ACL) bool {
+	if acl == nil {
+		return true
+	}
+	parts := strings.Split(id, "/")
+	switch {
+	case len(parts) == 2 && (parts[0] == "qemu" || parts[0] == "lxc"):
+		if vmid, err := strconv.Atoi(parts[1]); err == nil && vmid > 0 {
+			return acl.CanSee(fmt.Sprintf("/vms/%d", vmid))
+		}
+	case len(parts) == 2 && parts[0] == "node" && parts[1] != "":
+		return acl.CanSee("/nodes/" + parts[1])
+	case len(parts) == 3 && parts[0] == "storage" && parts[2] != "":
+		return acl.CanSee("/storage/" + parts[2])
+	case len(parts) == 2 && parts[0] == "pool" && parts[1] != "":
+		return acl.CanSee("/pool/" + parts[1])
+	}
+	return acl.CanSee("/")
+}
+
 func FilterTasks(tasks []Task, acl ACL) []Task {
 	if acl == nil {
 		return tasks

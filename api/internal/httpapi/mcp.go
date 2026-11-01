@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"hypervane/internal/pve"
 	"hypervane/internal/store"
 )
 
@@ -72,45 +73,24 @@ func mcpToolDefs() []map[string]any {
 	}
 }
 
+// mcpCall answers a tool from the poller's cache, which holds everything the
+// connection's API token can see. Every tool narrows it to the viewer first.
 func (s *Server) mcpCall(r *http.Request, name string, args map[string]any) (string, error) {
 	conn := s.requestConnectionID(r)
+	if s.ClientByID(conn) == nil {
+		return "", errNotFound("connection")
+	}
+	acl, _ := s.requestACL(r)
 	switch name {
-	case "hypervane_summary":
+	case "hypervane_summary", "hypervane_guests", "hypervane_guest":
 		status, resources, err := s.poller.CachedResources(r.Context(), conn)
 		if err != nil {
 			return "", err
 		}
-		raw, _ := json.Marshal(map[string]any{"status": status, "resources": len(resources)})
-		return string(raw), nil
-	case "hypervane_guests":
-		_, resources, err := s.poller.CachedResources(r.Context(), conn)
-		if err != nil {
-			return "", err
-		}
-		var guests []any
-		for _, g := range resources {
-			if g.Type == "qemu" || g.Type == "lxc" {
-				guests = append(guests, g)
-			}
-		}
-		raw, _ := json.Marshal(guests)
-		return string(raw), nil
-	case "hypervane_guest":
-		vmid := int(asFloat(args["vmid"]))
-		_, resources, err := s.poller.CachedResources(r.Context(), conn)
-		if err != nil {
-			return "", err
-		}
-		for _, g := range resources {
-			if g.VMID == vmid {
-				raw, _ := json.Marshal(g)
-				return string(raw), nil
-			}
-		}
-		return "", errNotFound("guest")
+		return mcpResourceTool(name, args, pve.FilterStatus(status, acl), pve.FilterResources(resources, acl))
 	case "hypervane_history":
 		key, _ := args["key"].(string)
-		if key == "" {
+		if key == "" || !pve.CanSeeResourceID(key, acl) {
 			return "", errNotFound("key")
 		}
 		rows, err := s.store.QueryMetricHistory(r.Context(), conn, key, asTime(args["from"]), asTime(args["to"]))
@@ -124,6 +104,32 @@ func (s *Server) mcpCall(r *http.Request, name string, args map[string]any) (str
 		return string(raw), nil
 	default:
 		return "", errNotFound("tool")
+	}
+}
+
+func mcpResourceTool(name string, args map[string]any, status []pve.ClusterStatus, resources []pve.Resource) (string, error) {
+	switch name {
+	case "hypervane_summary":
+		raw, _ := json.Marshal(map[string]any{"status": status, "resources": len(resources)})
+		return string(raw), nil
+	case "hypervane_guests":
+		var guests []pve.Resource
+		for _, g := range resources {
+			if g.Type == "qemu" || g.Type == "lxc" {
+				guests = append(guests, g)
+			}
+		}
+		raw, _ := json.Marshal(guests)
+		return string(raw), nil
+	default:
+		vmid := int(asFloat(args["vmid"]))
+		for _, g := range resources {
+			if g.VMID == vmid {
+				raw, _ := json.Marshal(g)
+				return string(raw), nil
+			}
+		}
+		return "", errNotFound("guest")
 	}
 }
 

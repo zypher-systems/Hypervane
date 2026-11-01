@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"errors"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,10 +80,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAuthRealms(w http.ResponseWriter, r *http.Request) {
 	realms := []pve.Realm{{Realm: "local", Type: "local", Comment: "Hypervane admin"}}
-	c := s.ClientByID(strings.TrimSpace(r.URL.Query().Get("connection")))
-	if c == nil {
-		c = s.Client()
-	}
+	c := s.loginClient(strings.TrimSpace(r.URL.Query().Get("connection")))
 	if c == nil {
 		writeJSON(w, http.StatusOK, realms)
 		return
@@ -106,7 +105,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	var req setupRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+		writeDecodeError(w, err)
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
@@ -137,16 +136,33 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// loginClient is the cluster a sign-in talks to: the one named, or the default
+// when none is. A named connection that is unavailable gets no client, so a
+// password is never sent to a different cluster than the one chosen.
+func (s *Server) loginClient(id string) *pve.Client {
+	if id == "" {
+		id = s.DefaultConnectionID()
+	}
+	return s.ClientByID(id)
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := decodeJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+		writeDecodeError(w, err)
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	req.Realm = strings.TrimSpace(req.Realm)
+	req.Connection = strings.TrimSpace(req.Connection)
+	attempt := newLoginAttempt(r, req)
+	if ok, wait := s.logins.take(attempt, time.Now()); !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		writeError(w, http.StatusTooManyRequests, "too many failed sign-in attempts; wait a few minutes and try again")
+		return
+	}
 	if req.Realm != "" && req.Realm != "local" {
-		s.handlePVELogin(w, r, req)
+		s.handlePVELogin(w, r, req, attempt)
 		return
 	}
 	user, err := s.store.UserByUsername(r.Context(), req.Username)
@@ -155,6 +171,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
+		s.logins.forgive(attempt)
 		writeError(w, http.StatusInternalServerError, "database error")
 		return
 	}
@@ -162,6 +179,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	s.logins.succeed(attempt)
 	if err := s.issueSession(w, r, user.ID, nil, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "session")
 		return
@@ -171,14 +189,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePVELogin(w http.ResponseWriter, r *http.Request, req loginRequest) {
-	connID := strings.TrimSpace(req.Connection)
-	c := s.ClientByID(connID)
-	if c == nil {
-		c = s.Client()
+func (s *Server) handlePVELogin(w http.ResponseWriter, r *http.Request, req loginRequest, attempt loginAttempt) {
+	connID := req.Connection
+	if connID == "" {
 		connID = s.DefaultConnectionID()
 	}
+	c := s.loginClient(connID)
 	if c == nil {
+		s.logins.forgive(attempt)
+		if req.Connection != "" {
+			writeError(w, http.StatusServiceUnavailable, "connection is unavailable")
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "cluster is not configured")
 		return
 	}
@@ -188,10 +210,15 @@ func (s *Server) handlePVELogin(w http.ResponseWriter, r *http.Request, req logi
 	}
 	ticket, err := c.CreateTicket(r.Context(), userid, req.Password, req.OTP, req.TFAChallenge)
 	if err != nil {
+		// Only a refusal from Proxmox counts as a wrong guess, not an outage.
+		if apiErr, ok := pve.IsAPIError(err); !ok || (apiErr.Status != http.StatusUnauthorized && apiErr.Status != http.StatusForbidden) {
+			s.logins.forgive(attempt)
+		}
 		writePVEError(w, err)
 		return
 	}
 	if ticket.NeedTFA {
+		s.logins.forgive(attempt)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"needTfa":      true,
 			"tfaChallenge": ticket.Ticket,
@@ -202,6 +229,7 @@ func (s *Server) handlePVELogin(w http.ResponseWriter, r *http.Request, req logi
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	s.logins.succeed(attempt)
 	if ticket.Username != "" {
 		userid = ticket.Username
 	}
@@ -226,7 +254,16 @@ func (s *Server) handlePVELogin(w http.ResponseWriter, r *http.Request, req logi
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
-		_ = s.store.DeleteSessionByTokenHash(r.Context(), store.HashToken(c.Value))
+		id, err := s.store.DeleteSessionByTokenHash(r.Context(), store.HashToken(c.Value))
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			// The token still works, so don't let the browser believe otherwise.
+			log.Printf("logout: %v", err)
+			writeError(w, http.StatusInternalServerError, "could not end session")
+			return
+		}
+		if id != "" {
+			s.hub.RevokeSession(r.Context(), id)
+		}
 	}
 	s.clearSession(w)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

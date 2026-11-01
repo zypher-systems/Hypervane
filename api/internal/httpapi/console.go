@@ -25,6 +25,7 @@ func (s *Server) handleGuestConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	defer s.closeWithSession(r, conn)()
 	if err := console.Proxy(r.Context(), c, conn, node, kind, vmid, console.NormalizeKind(r.URL.Query().Get("kind")), ""); err != nil {
 		log.Printf("console proxy: %v", err)
 	}
@@ -68,6 +69,7 @@ func (s *Server) handleNodeConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	defer s.closeWithSession(r, conn)()
 	if grantID != "" {
 		user, _ := r.Context().Value(userKey).(store.User)
 		root, err := s.takeUpgradeGrant(grantID, user.ID, node, s.requestConnectionID(r))

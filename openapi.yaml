@@ -15,9 +15,24 @@ paths:
   /auth/login:
     post:
       summary: Local or PVE user@realm session (TFA challenge when needed)
+      description: >-
+        Failed attempts are limited per client address and account. Bodies over
+        64 KiB are refused. A named connection that is disabled or deleted is
+        refused rather than replaced by the default.
+      responses:
+        "200":
+          description: Signed in, or a TFA challenge
+        "401":
+          description: Invalid credentials
+        "413":
+          description: Request body is too large
+        "429":
+          description: Too many failed attempts; see Retry-After
+        "503":
+          description: The named connection is unavailable
   /auth/logout:
     post:
-      summary: Clear session
+      summary: End the session and close its sockets
   /auth/realms:
     get:
       summary: Local plus PVE realm names for the login form
@@ -27,14 +42,25 @@ paths:
   /metrics/history:
     get:
       summary: Long-retention CPU/memory samples
+      description: Proxmox users are refused a resource outside their permissions.
+      responses:
+        "200":
+          description: Samples for the resource
+        "403":
+          description: The resource is outside the user's permissions
+        "503":
+          description: The target connection is unavailable
   /audit:
     get:
       summary: Hypervane mutation audit log
+      description: >-
+        Local admins see every event. A Proxmox user sees their own connection
+        only: everyone's events there with Sys.Audit on /, otherwise their own.
   /mcp:
     get:
       summary: Read-only MCP tool list
     post:
-      summary: Read-only MCP JSON-RPC
+      summary: Read-only MCP JSON-RPC, limited to what the caller may see
   /scripts:
     get:
       summary: Script Library recipe catalog
@@ -47,6 +73,13 @@ paths:
   /ws:
     get:
       summary: Authenticated live event socket
+      description: >-
+        Subscribe to `resources` and `tasks`, which carry a `connection` field,
+        or to a detail topic on one connection, `conn:<id>:<detail>`, where
+        detail is `node:<node>`, `guest:<node>:<type>:<vmid>`, `task:<upid>` or
+        `rrd:<kind>:<id>:<timeframe>`. Proxmox users receive only their own
+        connection, within their permissions. The socket closes when the
+        session ends.
   /cluster/summary:
     get:
       summary: Cluster status and resources

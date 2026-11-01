@@ -24,7 +24,7 @@ import { storagesForContent } from "@/lib/storage";
 import { MarkdownView } from "@/lib/markdown";
 import { useCan } from "@/lib/perms";
 import { bytes, cpuMeterLabel, cpuPct, uptime } from "@/lib/format";
-import { live } from "@/lib/ws";
+import { useActiveConnection, useLiveTopic } from "@/lib/liveTopic";
 import type { NetIface, Resource } from "@/types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
@@ -157,17 +157,11 @@ export function NodeDetailPage() {
     return canAudit;
   });
 
+  const connection = useActiveConnection();
   useEffect(() => {
     setLiveNode(null);
-    live.subscribe([`node:${node}`]);
-    const off = live.on((topic, data) => {
-      if (topic === `node:${node}`) setLiveNode(data as Record<string, unknown>);
-    });
-    return () => {
-      off();
-      live.unsubscribe([`node:${node}`]);
-    };
-  }, [node]);
+  }, [node, connection]);
+  useLiveTopic(`node:${node}`, (data) => setLiveNode(data as Record<string, unknown>));
 
   useEffect(() => {
     setReport(null);

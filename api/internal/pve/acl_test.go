@@ -86,3 +86,60 @@ func TestFilterResourcesAndTasks(t *testing.T) {
 		t.Fatal("rrd other storage should be hidden")
 	}
 }
+
+func TestFilterStatus(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{"/nodes/pve1": map[string]any{"Sys.Audit": 1.0}})
+	in := []ClusterStatus{
+		{Type: "cluster", Name: "lab", Quorate: 1},
+		{Type: "node", Name: "pve1", IP: "10.0.0.1"},
+		{Type: "node", Name: "pve2", IP: "10.0.0.2"},
+	}
+	out := FilterStatus(in, acl)
+	if len(out) != 2 || out[0].Type != "cluster" || out[1].Name != "pve1" {
+		t.Fatalf("%+v", out)
+	}
+	if got := FilterStatus(in, nil); len(got) != 3 {
+		t.Fatalf("nil ACL filtered: %+v", got)
+	}
+	if got := FilterStatus(in, ACL{}); len(got) != 1 {
+		t.Fatalf("empty ACL: %+v", got)
+	}
+}
+
+func TestCanSeeResourceID(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{
+		"/vms/100":     map[string]any{"VM.Audit": 1.0},
+		"/nodes/pve1":  map[string]any{"Sys.Audit": 1.0},
+		"/storage/nfs": map[string]any{"Datastore.Audit": 1.0},
+		"/pool/lab":    map[string]any{"Pool.Audit": 1.0},
+	})
+	for id, want := range map[string]bool{
+		"qemu/100":           true,
+		"lxc/100":            true,
+		"qemu/200":           false,
+		"node/pve1":          true,
+		"node/pve2":          false,
+		"storage/pve1/nfs":   true,
+		"storage/pve1/local": false,
+		"pool/lab":           true,
+		"pool/other":         false,
+		"qemu/100/extra":     false,
+		"qemu/abc":           false,
+		"":                   false,
+		"anything":           false,
+	} {
+		if got := CanSeeResourceID(id, acl); got != want {
+			t.Errorf("%q: got %v", id, got)
+		}
+	}
+	root := NormalizePermissions(map[string]any{"/": map[string]any{"Sys.Audit": 1.0}})
+	if !CanSeeResourceID("anything", root) || !CanSeeResourceID("qemu/999", root) {
+		t.Fatal("root access should cover everything")
+	}
+	if !CanSeeResourceID("qemu/200", nil) {
+		t.Fatal("nil ACL is unrestricted")
+	}
+	if CanSeeResourceID("qemu/100", ACL{}) {
+		t.Fatal("empty ACL sees nothing")
+	}
+}

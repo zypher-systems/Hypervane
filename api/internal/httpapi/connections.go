@@ -124,6 +124,7 @@ func (s *Server) handleInventory(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if acl, filter := s.requestACL(r); filter {
+			status = pve.FilterStatus(status, acl)
 			resources = pve.FilterResources(resources, acl)
 		}
 		groups = append(groups, group{ID: cfg.ID, Name: cfg.Name, Status: status, Resources: resources})

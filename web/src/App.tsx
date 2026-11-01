@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/layout/AppShell";
 import { api } from "@/lib/api";
+import { resetClientState } from "@/lib/session";
 import { BackupsPage } from "@/pages/Backups";
 import { CreateGuestPage } from "@/pages/CreateGuest";
 import { HAPage } from "@/pages/HA";
@@ -46,6 +47,9 @@ const setupRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
+  // Signing out and an expired session both land here, so the next account
+  // never sees what the last one had cached.
+  beforeLoad: () => resetClientState(queryClient),
   component: LoginPage,
 });
 
