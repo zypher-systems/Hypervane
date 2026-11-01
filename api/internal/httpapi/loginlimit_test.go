@@ -117,7 +117,7 @@ func TestLoginLimiterHoldsUnderConcurrency(t *testing.T) {
 	}
 }
 
-func TestLoginLimiterSweepBoundsMemory(t *testing.T) {
+func TestLoginLimiterSweepDropsOnlyExpiredKeys(t *testing.T) {
 	var l loginLimiter
 	now := time.Unix(1_700_000_000, 0)
 	l.fails = map[string][]time.Time{}
@@ -125,11 +125,59 @@ func TestLoginLimiterSweepBoundsMemory(t *testing.T) {
 		l.fails[strconv.Itoa(i)] = []time.Time{now}
 	}
 	l.sweep(now)
-	if len(l.fails) >= loginMaxKeys {
-		t.Fatalf("%d keys kept", len(l.fails))
+	if len(l.fails) != loginMaxKeys+10 {
+		t.Fatalf("live keys were dropped: %d left", len(l.fails))
 	}
 	l.sweep(now.Add(loginWindow + time.Minute))
 	if len(l.fails) != 0 {
 		t.Fatalf("%d expired keys kept", len(l.fails))
+	}
+}
+
+// Filling the table must never be a way to erase a lockout.
+func TestLoginLimiterKeepsLiveLockoutsAtTheCap(t *testing.T) {
+	var l loginLimiter
+	now := time.Unix(1_700_000_000, 0)
+	var victims []loginAttempt
+	for v := 0; v < 25; v++ {
+		victim := attemptFor(t, "admin"+strconv.Itoa(v), "192.0.2."+strconv.Itoa(v+1)+":1")
+		victims = append(victims, victim)
+		for i := 0; i < loginMaxPair; i++ {
+			if ok, _ := l.take(victim, now); !ok {
+				t.Fatalf("attempt %d refused", i)
+			}
+		}
+	}
+	for i := 0; i < loginMaxKeys*4; i++ {
+		l.fails["filler"+strconv.Itoa(i)] = []time.Time{now}
+	}
+	now = now.Add(2 * time.Second)
+	for _, victim := range victims {
+		if ok, _ := l.take(victim, now); ok {
+			t.Fatal("the cap erased a live lockout")
+		}
+	}
+}
+
+// An account that can't be tracked can't be limited, so it has to wait.
+func TestLoginLimiterRefusesWhatItCannotTrack(t *testing.T) {
+	var l loginLimiter
+	now := time.Unix(1_700_000_000, 0)
+	l.fails = map[string][]time.Time{}
+	for i := 0; i < loginMaxKeys; i++ {
+		l.fails["filler"+strconv.Itoa(i)] = []time.Time{now}
+	}
+	stranger := attemptFor(t, "stranger", "192.0.2.9:1")
+	now = now.Add(2 * time.Second)
+	ok, wait := l.take(stranger, now)
+	if ok || wait <= 0 {
+		t.Fatalf("untracked account allowed: %v %v", ok, wait)
+	}
+	if len(l.fails) > loginMaxKeys {
+		t.Fatalf("table grew to %d", len(l.fails))
+	}
+	now = now.Add(loginWindow + time.Second)
+	if ok, _ := l.take(stranger, now); !ok {
+		t.Fatal("expired entries did not free the table")
 	}
 }
