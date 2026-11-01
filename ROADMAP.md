@@ -388,6 +388,7 @@ Remaining stale UI, then leftover realtime majors. Branch `3.3.1-patch`.
 - Shared EmptyState that takes query status (HV-008, HV-026)
 - Notes draft reset, storage filter reset, formatting and copy (HV-009–015, HV-020, HV-022)
 - Console write deadlines, task-log resume, poller workers, inventory change-suppression, system-CA TLS verify, audit quality
+- Honor `NoAccess` below a broader grant on cached data: `/access/permissions` omits a path with no rights, so a grant on `/` still reaches a guest denied on `/vms/<id>`
 - Minors after this cut. Alerts stay the first Pro hole once the window closes.
 
 ## Tabled after 3.1
