@@ -2,9 +2,7 @@ package pve
 
 import (
 	"context"
-	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -99,33 +97,34 @@ func pathPrefixes(path string) []string {
 	return append(specific, "/")
 }
 
-func ResourceACLPath(r Resource) string {
-	switch r.Type {
-	case "qemu", "lxc":
-		if r.VMID > 0 {
-			return fmt.Sprintf("/vms/%d", r.VMID)
-		}
-	case "node":
-		if r.Node != "" {
-			return "/nodes/" + r.Node
-		}
-	case "storage":
-		if r.Storage != "" {
-			return "/storage/" + r.Storage
-		}
-	case "pool":
-		if r.Pool != "" {
-			return "/pool/" + r.Pool
-		}
-	case "sdn":
-		if i := strings.LastIndex(r.ID, "/"); i >= 0 && i+1 < len(r.ID) {
-			return "/sdn/zones/" + r.ID[i+1:]
-		}
-		return "/sdn"
-	case "cluster":
-		return "/"
+// resourcePath maps a /cluster/resources id to the path Proxmox checks before
+// listing it. ok is false for any other shape: like Proxmox with an SDN type it
+// doesn't know, a viewer gets nothing rather than a guess.
+func resourcePath(id string) (path string, ok bool) {
+	parts := strings.Split(strings.TrimPrefix(id, "/"), "/")
+	last := parts[len(parts)-1]
+	if last == "" {
+		return "", false
 	}
-	return "/"
+	switch {
+	case len(parts) == 2 && (parts[0] == "qemu" || parts[0] == "lxc"):
+		if vmID.MatchString(last) {
+			return "/vms/" + last, true
+		}
+	case len(parts) == 2 && parts[0] == "node":
+		return "/nodes/" + last, true
+	case len(parts) == 2 && parts[0] == "pool":
+		return "/pool/" + last, true
+	case len(parts) == 3 && parts[0] == "storage":
+		return "/storage/" + last, true
+	case len(parts) == 3 && parts[0] == "sdn":
+		return "/sdn/zones/" + last, true
+	case len(parts) == 4 && parts[0] == "network" && parts[2] == "zone":
+		return "/sdn/zones/" + last, true
+	case len(parts) == 4 && parts[0] == "network" && parts[2] == "fabric":
+		return "/sdn/fabrics/" + last, true
+	}
+	return "", false
 }
 
 func FilterResources(resources []Resource, acl ACL) []Resource {
@@ -134,7 +133,7 @@ func FilterResources(resources []Resource, acl ACL) []Resource {
 	}
 	out := make([]Resource, 0, len(resources))
 	for _, r := range resources {
-		if r.Type == "cluster" || acl.CanRead(ResourceACLPath(r)) {
+		if r.Type == "cluster" || CanSeeResourceID(r.ID, acl) {
 			out = append(out, r)
 		}
 	}
@@ -156,29 +155,13 @@ func FilterStatus(status []ClusterStatus, acl ACL) []ClusterStatus {
 	return out
 }
 
-// CanSeeResourceID reports whether the ACL covers a /cluster/resources id such
-// as "qemu/100", "node/pve1" or "storage/pve1/local". Any other shape needs
-// access at the root.
+// CanSeeResourceID reports whether the ACL covers a /cluster/resources id.
 func CanSeeResourceID(id string, acl ACL) bool {
 	if acl == nil {
 		return true
 	}
-	parts := strings.Split(id, "/")
-	switch {
-	case len(parts) == 2 && (parts[0] == "qemu" || parts[0] == "lxc"):
-		if vmid, err := strconv.Atoi(parts[1]); err == nil && vmid > 0 {
-			return acl.CanRead(fmt.Sprintf("/vms/%d", vmid))
-		}
-	case len(parts) == 2 && parts[0] == "node" && parts[1] != "":
-		return acl.CanRead("/nodes/" + parts[1])
-	case len(parts) == 3 && parts[0] == "storage" && parts[2] != "":
-		return acl.CanRead("/storage/" + parts[2])
-	case len(parts) == 2 && parts[0] == "pool" && parts[1] != "":
-		return acl.CanRead("/pool/" + parts[1])
-	case len(parts) == 3 && parts[0] == "sdn" && parts[2] != "":
-		return acl.CanRead("/sdn/zones/" + parts[2])
-	}
-	return acl.CanRead("/")
+	path, ok := resourcePath(id)
+	return ok && acl.CanRead(path)
 }
 
 func FilterTasks(tasks []Task, acl ACL, userid string) []Task {
@@ -339,14 +322,14 @@ func (a ACL) restrictTo(resources []Resource) {
 		}
 	}
 	for _, r := range resources {
-		switch r.Type {
-		case "qemu", "lxc", "storage", "pool", "sdn":
-			path := ResourceACLPath(r)
-			if a[path] == nil {
-				a[path] = map[string]int{}
-			}
-			a[path][readPrivilege(path)] = 1
+		path, ok := resourcePath(r.ID)
+		if !ok || r.Type == "node" {
+			continue
 		}
+		if a[path] == nil {
+			a[path] = map[string]int{}
+		}
+		a[path][readPrivilege(path)] = 1
 	}
 }
 

@@ -45,6 +45,11 @@ type Server struct {
 	insightCache ttlCache
 	aclCache     ttlCache
 
+	// Tests shorten these; zero means the default.
+	aclTTL          time.Duration
+	socketACLEvery  time.Duration
+	socketACLMaxAge time.Duration
+
 	scriptsOnce sync.Once
 	scriptJobs  *scripts.Jobs
 	images      *scripts.Images
@@ -840,18 +845,28 @@ func (s *Server) requestACL(r *http.Request) (pve.ACL, bool) {
 	if user.Kind != store.UserKindPVE {
 		return nil, false
 	}
+	acl, err := s.viewerACL(r)
+	if err != nil {
+		return pve.ACL{}, true
+	}
+	return acl, true
+}
+
+// viewerACL looks up what the Proxmox user behind r may read.
+func (s *Server) viewerACL(r *http.Request) (pve.ACL, error) {
+	user, _ := r.Context().Value(userKey).(store.User)
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
-	acl, err := cachedFetch(&s.aclCache, sess.ID, ttlViewerACL, func() (pve.ACL, error) {
+	ttl := s.aclTTL
+	if ttl == 0 {
+		ttl = ttlViewerACL
+	}
+	return cachedFetch(&s.aclCache, sess.ID, ttl, func() (pve.ACL, error) {
 		c, err := s.ticketClient(r.Context(), sess, user)
 		if err != nil {
 			return nil, err
 		}
 		return c.ViewerACL(r.Context())
 	})
-	if err != nil {
-		return pve.ACL{}, true
-	}
-	return acl, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

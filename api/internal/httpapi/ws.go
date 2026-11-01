@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,8 +17,13 @@ import (
 	"hypervane/internal/store"
 )
 
-// sessionCheckEvery is how often a long-lived socket re-checks its session.
-const sessionCheckEvery = 20 * time.Second
+const (
+	// sessionCheckEvery is how often a long-lived socket re-checks its session.
+	sessionCheckEvery = 20 * time.Second
+
+	socketACLEvery  = 10 * time.Second
+	socketACLMaxAge = time.Minute
+)
 
 // socketViewer is who a socket serves. A nil acl is an unrestricted viewer.
 type socketViewer struct {
@@ -49,7 +55,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	acl, filter := s.requestACL(r)
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
 	user, _ := r.Context().Value(userKey).(store.User)
-	viewer := socketViewer{acl: acl, connection: sess.ConnectionID, userid: user.PVEUserID}
+	var viewer atomic.Pointer[socketViewer]
+	viewer.Store(&socketViewer{acl: acl, connection: sess.ConnectionID, userid: user.PVEUserID})
+	if filter {
+		stop := make(chan struct{})
+		defer close(stop)
+		go s.refreshSocketViewer(r, &viewer, stop)
+	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
@@ -75,7 +87,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			case "subscribe":
 				heldMu.Lock()
 				for _, t := range cmd.Topics {
-					if _, dup := held[t]; dup || !topicAllowed(t, viewer) {
+					if _, dup := held[t]; dup || !topicAllowed(t, *viewer.Load()) {
 						continue
 					}
 					held[t] = struct{}{}
@@ -140,7 +152,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if filter {
-				filtered, keep := filterHubMessage(msg, viewer)
+				filtered, keep := filterHubMessage(msg, *viewer.Load())
 				if !keep {
 					continue
 				}
@@ -150,6 +162,44 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+// refreshSocketViewer keeps a restricted socket's permissions current. The ACL
+// lists exactly what the viewer may read, so without this a new guest would
+// stay hidden and a revoked one visible for the life of the socket. It runs
+// apart from the write loop so a slow Proxmox can't hold up delivery. A brief
+// failure keeps the last good answer, because an empty one would blank the
+// inventory, but only for socketACLMaxAge.
+func (s *Server) refreshSocketViewer(r *http.Request, viewer *atomic.Pointer[socketViewer], stop <-chan struct{}) {
+	every, maxAge := s.socketACLEvery, s.socketACLMaxAge
+	if every == 0 {
+		every = socketACLEvery
+	}
+	if maxAge == 0 {
+		maxAge = socketACLMaxAge
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	lastGood := time.Now()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+		acl, err := s.viewerACL(r)
+		switch {
+		case err == nil:
+			lastGood = time.Now()
+		case time.Since(lastGood) < maxAge:
+			continue
+		default:
+			acl = pve.ACL{}
+		}
+		next := *viewer.Load()
+		next.acl = acl
+		viewer.Store(&next)
 	}
 }
 
