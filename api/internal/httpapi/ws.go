@@ -1,12 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,8 +49,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	client := s.hub.Register()
 	defer client.Close()
 
-	held := map[string]struct{}{}
-	var heldMu sync.Mutex
+	topics := newSocketTopics(client, s.poller)
 
 	acl, filter := s.requestACL(r)
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
@@ -60,7 +59,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if filter {
 		stop := make(chan struct{})
 		defer close(stop)
-		go s.refreshSocketViewer(r, &viewer, stop)
+		go s.refreshSocketViewer(r.Context(), sess, user, &viewer, topics, stop)
 	}
 
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -85,26 +84,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			switch cmd.Type {
 			case "subscribe":
-				heldMu.Lock()
-				for _, t := range cmd.Topics {
-					if _, dup := held[t]; dup || !topicAllowed(t, *viewer.Load()) {
-						continue
-					}
-					held[t] = struct{}{}
-					s.poller.Watch(t)
-					client.Subscribe([]string{t})
-				}
-				heldMu.Unlock()
+				topics.subscribe(cmd.Topics, &viewer)
 			case "unsubscribe":
-				heldMu.Lock()
-				for _, t := range cmd.Topics {
-					if _, ok := held[t]; ok {
-						delete(held, t)
-						s.poller.Unwatch(t)
-						client.Unsubscribe([]string{t})
-					}
-				}
-				heldMu.Unlock()
+				topics.unsubscribe(cmd.Topics)
 			case "ping":
 				select {
 				case writes <- []byte(`{"type":"pong"}`):
@@ -116,11 +98,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		_ = conn.Close()
 		<-done
-		heldMu.Lock()
-		defer heldMu.Unlock()
-		for t := range held {
-			s.poller.Unwatch(t)
-		}
+		topics.release()
 	}()
 
 	ticker := time.NewTicker(20 * time.Second)
@@ -168,10 +146,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 // refreshSocketViewer keeps a restricted socket's permissions current. The ACL
 // lists exactly what the viewer may read, so without this a new guest would
 // stay hidden and a revoked one visible for the life of the socket. It runs
-// apart from the write loop so a slow Proxmox can't hold up delivery. A brief
-// failure keeps the last good answer, because an empty one would blank the
-// inventory, but only for socketACLMaxAge.
-func (s *Server) refreshSocketViewer(r *http.Request, viewer *atomic.Pointer[socketViewer], stop <-chan struct{}) {
+// apart from the write loop so a slow Proxmox can't hold up delivery.
+//
+// A brief failure keeps the last good answer, because an empty one would blank
+// the inventory, but never past socketACLMaxAge: each lookup's deadline is the
+// moment the old answer expires, so a hang can't outlast it either. Each tick
+// reloads the session, because a socket outlives its first Proxmox ticket.
+func (s *Server) refreshSocketViewer(ctx context.Context, sess store.Session, user store.User, viewer *atomic.Pointer[socketViewer], topics *socketTopics, stop <-chan struct{}) {
 	every, maxAge := s.socketACLEvery, s.socketACLMaxAge
 	if every == 0 {
 		every = socketACLEvery
@@ -188,7 +169,13 @@ func (s *Server) refreshSocketViewer(r *http.Request, viewer *atomic.Pointer[soc
 			return
 		case <-ticker.C:
 		}
-		acl, err := s.viewerACL(r)
+		deadline := lastGood.Add(maxAge)
+		if now := time.Now(); !deadline.After(now) {
+			deadline = now.Add(maxAge) // Already closed: keep trying to recover.
+		}
+		attempt, cancel := context.WithDeadline(ctx, deadline)
+		acl, err := s.currentViewerACL(attempt, sess.TokenHash, user)
+		cancel()
 		switch {
 		case err == nil:
 			lastGood = time.Now()
@@ -200,7 +187,23 @@ func (s *Server) refreshSocketViewer(r *http.Request, viewer *atomic.Pointer[soc
 		next := *viewer.Load()
 		next.acl = acl
 		viewer.Store(&next)
+		topics.reconcile(next)
 	}
+}
+
+func (s *Server) currentViewerACL(ctx context.Context, tokenHash string, user store.User) (pve.ACL, error) {
+	sess, err := s.currentSession(ctx, tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	return s.viewerACL(ctx, sess, user)
+}
+
+func (s *Server) currentSession(ctx context.Context, tokenHash string) (store.Session, error) {
+	if s.sessionLookup != nil {
+		return s.sessionLookup(ctx, tokenHash)
+	}
+	return s.store.SessionByTokenHash(ctx, tokenHash)
 }
 
 // closeWithSession closes conn once the session behind r ends, and returns a
@@ -222,7 +225,7 @@ func (s *Server) closeWithSession(r *http.Request, conn *websocket.Conn) func() 
 				_ = conn.Close()
 				return
 			case <-ticker.C:
-				if _, err := s.store.SessionByTokenHash(r.Context(), sess.TokenHash); errors.Is(err, store.ErrNotFound) {
+				if _, err := s.currentSession(r.Context(), sess.TokenHash); errors.Is(err, store.ErrNotFound) {
 					_ = conn.Close()
 					return
 				}

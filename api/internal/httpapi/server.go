@@ -49,6 +49,7 @@ type Server struct {
 	aclTTL          time.Duration
 	socketACLEvery  time.Duration
 	socketACLMaxAge time.Duration
+	sessionLookup   func(context.Context, string) (store.Session, error)
 
 	scriptsOnce sync.Once
 	scriptJobs  *scripts.Jobs
@@ -845,27 +846,26 @@ func (s *Server) requestACL(r *http.Request) (pve.ACL, bool) {
 	if user.Kind != store.UserKindPVE {
 		return nil, false
 	}
-	acl, err := s.viewerACL(r)
+	sess, _ := r.Context().Value(sessionKey).(store.Session)
+	acl, err := s.viewerACL(r.Context(), sess, user)
 	if err != nil {
 		return pve.ACL{}, true
 	}
 	return acl, true
 }
 
-// viewerACL looks up what the Proxmox user behind r may read.
-func (s *Server) viewerACL(r *http.Request) (pve.ACL, error) {
-	user, _ := r.Context().Value(userKey).(store.User)
-	sess, _ := r.Context().Value(sessionKey).(store.Session)
+// viewerACL looks up what a Proxmox user may read.
+func (s *Server) viewerACL(ctx context.Context, sess store.Session, user store.User) (pve.ACL, error) {
 	ttl := s.aclTTL
 	if ttl == 0 {
 		ttl = ttlViewerACL
 	}
 	return cachedFetch(&s.aclCache, sess.ID, ttl, func() (pve.ACL, error) {
-		c, err := s.ticketClient(r.Context(), sess, user)
+		c, err := s.ticketClient(ctx, sess, user)
 		if err != nil {
 			return nil, err
 		}
-		return c.ViewerACL(r.Context())
+		return c.ViewerACL(ctx)
 	})
 }
 
