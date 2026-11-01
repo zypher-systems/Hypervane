@@ -11,7 +11,7 @@ import (
 )
 
 // mcpVersion is what the MCP endpoint reports. It tracks the release.
-const mcpVersion = "3.3.0"
+const mcpVersion = "3.3.1"
 
 type mcpReq struct {
 	JSONRPC string          `json:"jsonrpc"`

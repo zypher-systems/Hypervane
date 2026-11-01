@@ -50,11 +50,12 @@ Native PVE exposes about 675 API operations. Version 0.1 covers the jobs operato
 | 3.2.2 | Wrong target | Reset entity/live state; tree and console use the row connection | Shipped |
 | 3.2.3 | Live hub | Websocket single-writer, watcher unwatch, live ACL filter; hardware refresh on UPID | Shipped |
 | 3.2.4 | Task completion | Invalidate and toast when the UPID finishes | Shipped |
-| 3.2.5 | Authz and session | MCP/history ACL, audit scope, logout, login limits, connection isolation, XSS | Shipped in 3.3.0 |
-| 3.3.0 | Calm redesign | Tokens, routed tabs, datacenter overview, insights, token-scoped UI, PVE 9 decode fixes | Shipped |
-| 3.3.1 | Freshness and hub load | Summary poll, query keys, empty states, poller and TLS leftovers | Planned |
+| 3.2.5 | Authz and session | MCP/history ACL, audit scope, logout, login limits, connection isolation, XSS | Shipped in 3.3.1 |
+| 3.3.0 | Calm redesign | Tokens, routed tabs, datacenter overview, insights, token-scoped UI, PVE 9 decode fixes | Shipped in 3.3.1 |
+| 3.3.1 | First public release | Live updates follow Proxmox permissions, with a hard limit on how long an old answer lasts | Shipped |
+| 3.3.2 | Freshness and hub load | Summary poll, query keys, empty states, poller and TLS leftovers | Planned |
 
-Build order is intentional: finish one cluster before multi-cluster. 3.2.2–3.2.5 and 3.3.1 are a correctness train (UI glitch + harden), not a feature train. Each sub-point is its own `N.N.N-patch` branch from `dev`.
+Build order is intentional: finish one cluster before multi-cluster. 3.2.2–3.2.5 and 3.3.2 are a correctness train (UI glitch + harden), not a feature train. Each sub-point is its own `N.N.N-patch` branch from `dev`.
 
 ## 0.1 Daily Ops — shipped
 
@@ -352,9 +353,9 @@ Invalidate and toast when the Proxmox UPID finishes on the remaining call sites.
 - Pass query keys from the remaining `attachTask` sites so a finished `exitstatus` refreshes the panel that queued the work (HV-001, HV-002, HV-017)
 - Toast start from `attachTask` when keys are registered; the existing watcher toasts the result (HV-006)
 
-## 3.2.5 Authz and session — shipped in 3.3.0
+## 3.2.5 Authz and session — shipped in 3.3.1
 
-Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.0. No guest writes.
+Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.1. No guest writes.
 
 - Viewer permissions on MCP, metric history, ring and IOPS samples, and cached cluster status
 - Audit limited to the viewer's connection, and to their own events without `Sys.Audit` on `/`
@@ -369,9 +370,9 @@ Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.0. 
 - Safe MetricChart tooltips
 - Route error boundary and 401 bounce
 
-## 3.3.0 Calm redesign — shipped
+## 3.3.0 Calm redesign — shipped in 3.3.1
 
-Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by default, one accent for the primary action, and color only where something needs a decision.
+This was never published on its own: it went out as part of 3.3.1. Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by default, one accent for the primary action, and color only where something needs a decision.
 
 - Foundation: design tokens, neutral buttons and badges (stopped is gray, not red), shared Tabs, Segmented, and Meter, one chart palette
 - Navigation: Datacenter root in the tree, one header and tab strip for every datacenter page, routed `?tab=` panels instead of stacked modals, ⌘K finds pages and settings
@@ -383,9 +384,16 @@ Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by 
 - Recipes reworked: every recipe plans its exact steps before running (the preview is the plan), validates inputs against the cluster, asks before destructive runs, and reports each run step by step (`/scripts/jobs`). Fixed: Ubuntu images saved as `.img` (Proxmox refuses them for import), Fedora 42 gone from the mirror (now Fedora 44, newest build looked up), re-running a template recipe failing on the earlier download, refresh deleting the template before the download succeeded, SSH keys rejected by Proxmox (form-encoded `+`), containers sent `sshkeys` instead of `ssh-public-keys`. New: Debian 12, Ubuntu 22.04, openSUSE Leap 16.0, Arch, AlmaLinux 10, Rocky 10, CentOS Stream 10, deploy from template, deploy several, check updates, shut down / start a node's guests, move all guests off a node, schedule backups for unprotected guests, clean up old snapshots
 - Fixes found against a live PVE 9 cluster: double-encoded path IDs (task stop, HA, users), 50-line task logs, and response types for cluster config, certificates, APT repositories, LVM, replication status, prune preview, users, OpenID, ACME schema, IPAM status, vzdump defaults; PVE 9 HA groups and datacenter firewall log
 
-## 3.3.1 Freshness and hub load — planned
+## 3.3.1 First public release — shipped
 
-Remaining stale UI, then leftover realtime majors. Branch `3.3.1-patch`.
+The first tagged release. It carries 3.2.5 and 3.3.0, plus what review of them found in live updates.
+
+- An open socket follows permission changes, and it holds the topics it may read and no others
+- If Proxmox stops answering, the last good answer ends one minute after it arrived: at that moment, not at the next refresh, and before any attempt to recover
+
+## 3.3.2 Freshness and hub load — planned
+
+Remaining stale UI, then leftover realtime majors. Branch `3.3.2-patch`.
 
 - Central `["summary"]` interval and query keys that include node/type (HV-005, HV-007)
 - Shared EmptyState that takes query status (HV-008, HV-026)
