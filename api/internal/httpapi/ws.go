@@ -19,6 +19,13 @@ import (
 // sessionCheckEvery is how often a long-lived socket re-checks its session.
 const sessionCheckEvery = 20 * time.Second
 
+// socketViewer is who a socket serves. A nil acl is an unrestricted viewer.
+type socketViewer struct {
+	acl        pve.ACL
+	connection string
+	userid     string
+}
+
 type wsCommand struct {
 	Type   string   `json:"type"`
 	Topics []string `json:"topics"`
@@ -41,6 +48,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	acl, filter := s.requestACL(r)
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
+	user, _ := r.Context().Value(userKey).(store.User)
+	viewer := socketViewer{acl: acl, connection: sess.ConnectionID, userid: user.PVEUserID}
 
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
@@ -66,7 +75,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			case "subscribe":
 				heldMu.Lock()
 				for _, t := range cmd.Topics {
-					if _, dup := held[t]; dup || !topicAllowed(t, acl, sess.ConnectionID) {
+					if _, dup := held[t]; dup || !topicAllowed(t, viewer) {
 						continue
 					}
 					held[t] = struct{}{}
@@ -131,7 +140,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if filter {
-				filtered, keep := filterHubMessage(msg, acl, sess.ConnectionID)
+				filtered, keep := filterHubMessage(msg, viewer)
 				if !keep {
 					continue
 				}
@@ -176,38 +185,38 @@ func (s *Server) closeWithSession(r *http.Request, conn *websocket.Conn) func() 
 	}
 }
 
-func detailVisible(detail string, acl pve.ACL) bool {
+func detailVisible(detail string, v socketViewer) bool {
 	switch {
 	case strings.HasPrefix(detail, "guest:"):
-		return pve.CanSeeGuestTopic(detail, acl)
+		return pve.CanSeeGuestTopic(detail, v.acl)
 	case strings.HasPrefix(detail, "task:"):
-		return pve.CanSeeTaskTopic(detail, acl)
+		return pve.CanSeeTaskTopic(detail, v.acl, v.userid)
 	case strings.HasPrefix(detail, "node:"):
-		return pve.CanSeeNodeTopic(detail, acl)
+		return pve.CanSeeNodeTopic(detail, v.acl)
 	case strings.HasPrefix(detail, "rrd:"):
-		return pve.CanSeeRRDTopic(detail, acl)
+		return pve.CanSeeRRDTopic(detail, v.acl)
 	}
 	return false
 }
 
 // topicAllowed decides a subscription before the poller spends the
-// connection's token on it. A nil ACL is an unrestricted viewer; anyone else
-// stays on their own connection, within what their ACL shows.
-func topicAllowed(topic string, acl pve.ACL, connection string) bool {
+// connection's token on it. Anyone restricted stays on their own connection,
+// within what their ACL shows.
+func topicAllowed(topic string, v socketViewer) bool {
 	if topic == "resources" || topic == "tasks" {
 		return true
 	}
 	id, detail, ok := hub.SplitTopic(topic)
-	if !ok || (acl != nil && id != connection) {
+	if !ok || (v.acl != nil && id != v.connection) {
 		return false
 	}
-	return detailVisible(detail, acl)
+	return detailVisible(detail, v)
 }
 
 // filterHubMessage narrows a hub event for a restricted socket. Cached data
 // comes from the connection's API token and covers every cluster, so anything
 // that can't be shown to belong to this viewer is dropped.
-func filterHubMessage(raw []byte, acl pve.ACL, connection string) ([]byte, bool) {
+func filterHubMessage(raw []byte, v socketViewer) ([]byte, bool) {
 	var ev struct {
 		Type  string          `json:"type"`
 		Topic string          `json:"topic"`
@@ -225,25 +234,25 @@ func filterHubMessage(raw []byte, acl pve.ACL, connection string) ([]byte, bool)
 			Resources  []pve.Resource      `json:"resources"`
 			TS         int64               `json:"ts,omitempty"`
 		}
-		if json.Unmarshal(ev.Data, &payload) != nil || payload.Connection != connection {
+		if json.Unmarshal(ev.Data, &payload) != nil || payload.Connection != v.connection {
 			return nil, false
 		}
-		payload.Status = pve.FilterStatus(payload.Status, acl)
-		payload.Resources = pve.FilterResources(payload.Resources, acl)
+		payload.Status = pve.FilterStatus(payload.Status, v.acl)
+		payload.Resources = pve.FilterResources(payload.Resources, v.acl)
 		data = payload
 	case "tasks":
 		var payload struct {
 			Connection string     `json:"connection"`
 			Tasks      []pve.Task `json:"tasks"`
 		}
-		if json.Unmarshal(ev.Data, &payload) != nil || payload.Connection != connection {
+		if json.Unmarshal(ev.Data, &payload) != nil || payload.Connection != v.connection {
 			return nil, false
 		}
-		payload.Tasks = pve.FilterTasks(payload.Tasks, acl)
+		payload.Tasks = pve.FilterTasks(payload.Tasks, v.acl, v.userid)
 		data = payload
 	default:
 		id, detail, ok := hub.SplitTopic(ev.Topic)
-		if !ok || id != connection || !detailVisible(detail, acl) {
+		if !ok || id != v.connection || !detailVisible(detail, v) {
 			return nil, false
 		}
 		return raw, true

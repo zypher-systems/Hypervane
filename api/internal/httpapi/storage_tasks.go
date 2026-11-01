@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"hypervane/internal/pve"
+	"hypervane/internal/store"
 )
 
 func (s *Server) handleStorages(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +348,8 @@ func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = filtered
 	}
 	if acl, filter := s.requestACL(r); filter {
-		tasks = pve.FilterTasks(tasks, acl)
+		user, _ := r.Context().Value(userKey).(store.User)
+		tasks = pve.FilterTasks(tasks, acl, user.PVEUserID)
 	}
 	writeJSON(w, http.StatusOK, tasks)
 }

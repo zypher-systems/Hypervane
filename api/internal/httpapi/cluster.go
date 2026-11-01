@@ -110,7 +110,8 @@ func (s *Server) handleNodeIORRD(w http.ResponseWriter, r *http.Request) {
 		writePVEError(w, err)
 		return
 	}
-	if s.poller != nil {
+	// The IOPS series comes from the connection's token, not the viewer's ticket.
+	if acl, _ := s.requestACL(r); s.poller != nil && pve.CanSeeResourceID("node/"+node, acl) {
 		if iops, err := s.poller.NodeIOPS(r.Context(), s.requestConnectionID(r), node, tf); err == nil && len(iops) > 0 {
 			data.IOPS = iops
 		}
@@ -349,6 +350,11 @@ func (s *Server) handleGuestIORRD(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, vmid, ok := s.guestRef(w, r)
 	if !ok {
+		return
+	}
+	// The series comes from the connection's token, so Proxmox never checks it.
+	if acl, _ := s.requestACL(r); !pve.CanSeeResourceID("qemu/"+strconv.Itoa(vmid), acl) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	tf := queryDefault(r, "timeframe", "hour")
