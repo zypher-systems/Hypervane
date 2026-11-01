@@ -20,6 +20,10 @@ func vm100ACL() pve.ACL {
 	})
 }
 
+func testViewer(acl pve.ACL) socketViewer {
+	return socketViewer{acl: acl, connection: labA, userid: "alice@pve"}
+}
+
 func hubEvent(t *testing.T, topic string, data any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{"type": "event", "topic": topic, "data": data})
@@ -44,7 +48,7 @@ func TestFilterHubMessageResources(t *testing.T) {
 			{ID: "qemu/200", Type: "qemu", VMID: 200},
 		},
 	})
-	out, keep := filterHubMessage(raw, vm100ACL(), labA)
+	out, keep := filterHubMessage(raw, testViewer(vm100ACL()))
 	if !keep {
 		t.Fatal("keep resources")
 	}
@@ -90,7 +94,7 @@ func TestFilterHubMessageDropsOtherConnections(t *testing.T) {
 		"not json":               []byte("{"),
 	}
 	for name, raw := range cases {
-		if _, keep := filterHubMessage(raw, vm100ACL(), labA); keep {
+		if _, keep := filterHubMessage(raw, testViewer(vm100ACL())); keep {
 			t.Errorf("%s must drop", name)
 		}
 	}
@@ -104,7 +108,7 @@ func TestFilterHubMessageTasksPayload(t *testing.T) {
 			{UPID: "UPID:pve2:1:1:1:qmstart:200:user@pam:", Node: "pve2", ID: "200"},
 		},
 	})
-	out, keep := filterHubMessage(raw, vm100ACL(), labA)
+	out, keep := filterHubMessage(raw, testViewer(vm100ACL()))
 	if !keep {
 		t.Fatal("keep tasks")
 	}
@@ -134,7 +138,7 @@ func TestFilterHubMessageDetailTopics(t *testing.T) {
 		"guest:pve1:qemu:200",
 	}
 	for _, detail := range hidden {
-		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), vm100ACL(), labA); keep {
+		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), testViewer(vm100ACL())); keep {
 			t.Fatalf("should drop %s", detail)
 		}
 	}
@@ -145,14 +149,14 @@ func TestFilterHubMessageDetailTopics(t *testing.T) {
 		"guest:pve1:qemu:100",
 	}
 	for _, detail := range visible {
-		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), vm100ACL(), labA); !keep {
+		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), testViewer(vm100ACL())); !keep {
 			t.Fatalf("should keep %s", detail)
 		}
 	}
 }
 
 func TestFilterHubMessageDropsUnparseableTasks(t *testing.T) {
-	if _, keep := filterHubMessage(hubEvent(t, "tasks", "not-a-task-list"), vm100ACL(), labA); keep {
+	if _, keep := filterHubMessage(hubEvent(t, "tasks", "not-a-task-list"), testViewer(vm100ACL())); keep {
 		t.Fatal("unparseable tasks must drop, not leak")
 	}
 }
@@ -179,8 +183,42 @@ func TestTopicAllowed(t *testing.T) {
 		{"admin unknown detail", hub.ScopedTopic(labB, "bogus"), nil, false},
 	}
 	for _, c := range cases {
-		if got := topicAllowed(c.topic, c.acl, labA); got != c.want {
+		if got := topicAllowed(c.topic, testViewer(c.acl)); got != c.want {
 			t.Errorf("%s: got %v", c.name, got)
 		}
+	}
+}
+
+func TestFilterHubMessageTasksFollowOwnership(t *testing.T) {
+	onlyVM := pve.NormalizePermissions(map[string]any{"/vms/100": map[string]any{"VM.Audit": 1.0}})
+	raw := hubEvent(t, "tasks", map[string]any{
+		"connection": labA,
+		"tasks": []pve.Task{
+			{UPID: "UPID:pve1:1:1:1:qmstart:100:alice@pve:", Node: "pve1", ID: "100", User: "alice@pve"},
+			{UPID: "UPID:pve1:1:1:2:qmstart:100:bob@pve:", Node: "pve1", ID: "100", User: "bob@pve"},
+		},
+	})
+	out, keep := filterHubMessage(raw, testViewer(onlyVM))
+	if !keep {
+		t.Fatal("keep tasks")
+	}
+	var ev struct {
+		Data struct {
+			Tasks []pve.Task `json:"tasks"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(ev.Data.Tasks) != 1 || ev.Data.Tasks[0].User != "alice@pve" {
+		t.Fatalf("tasks %+v", ev.Data.Tasks)
+	}
+	own := hub.ScopedTopic(labA, "task:UPID:pve1:1:1:1:qmstart:100:alice@pve:")
+	theirs := hub.ScopedTopic(labA, "task:UPID:pve1:1:1:2:qmstart:100:bob@pve:")
+	if !topicAllowed(own, testViewer(onlyVM)) {
+		t.Fatal("a user must be able to follow their own task")
+	}
+	if topicAllowed(theirs, testViewer(onlyVM)) {
+		t.Fatal("VM.Audit must not read another user's task")
 	}
 }

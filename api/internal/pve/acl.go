@@ -60,16 +60,26 @@ func (a ACL) Has(path, priv string) bool {
 	return false
 }
 
-func (a ACL) CanSee(path string) bool {
-	if a == nil {
-		return false
+// CanRead reports whether the ACL holds the privilege Proxmox itself requires
+// to read what lives at path. Any other privilege on the path grants nothing:
+// cached data comes from the API token, so Proxmox never gets to refuse it.
+func (a ACL) CanRead(path string) bool {
+	return a.Has(path, readPrivilege(path))
+}
+
+// readPrivilege follows the checks in Proxmox's /cluster/resources.
+func readPrivilege(path string) string {
+	switch strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0] {
+	case "vms":
+		return "VM.Audit"
+	case "storage":
+		return "Datastore.Audit"
+	case "pool":
+		return "Pool.Audit"
+	case "sdn":
+		return "SDN.Audit"
 	}
-	for _, prefix := range pathPrefixes(path) {
-		if len(a[prefix]) > 0 {
-			return true
-		}
-	}
-	return false
+	return "Sys.Audit"
 }
 
 func pathPrefixes(path string) []string {
@@ -122,7 +132,7 @@ func FilterResources(resources []Resource, acl ACL) []Resource {
 	}
 	out := make([]Resource, 0, len(resources))
 	for _, r := range resources {
-		if r.Type == "cluster" || acl.CanSee(ResourceACLPath(r)) {
+		if r.Type == "cluster" || acl.CanRead(ResourceACLPath(r)) {
 			out = append(out, r)
 		}
 	}
@@ -137,7 +147,7 @@ func FilterStatus(status []ClusterStatus, acl ACL) []ClusterStatus {
 	}
 	out := make([]ClusterStatus, 0, len(status))
 	for _, st := range status {
-		if st.Type != "node" || acl.CanSee("/nodes/"+st.Name) {
+		if st.Type != "node" || acl.CanRead("/nodes/"+st.Name) {
 			out = append(out, st)
 		}
 	}
@@ -155,44 +165,59 @@ func CanSeeResourceID(id string, acl ACL) bool {
 	switch {
 	case len(parts) == 2 && (parts[0] == "qemu" || parts[0] == "lxc"):
 		if vmid, err := strconv.Atoi(parts[1]); err == nil && vmid > 0 {
-			return acl.CanSee(fmt.Sprintf("/vms/%d", vmid))
+			return acl.CanRead(fmt.Sprintf("/vms/%d", vmid))
 		}
 	case len(parts) == 2 && parts[0] == "node" && parts[1] != "":
-		return acl.CanSee("/nodes/" + parts[1])
+		return acl.CanRead("/nodes/" + parts[1])
 	case len(parts) == 3 && parts[0] == "storage" && parts[2] != "":
-		return acl.CanSee("/storage/" + parts[2])
+		return acl.CanRead("/storage/" + parts[2])
 	case len(parts) == 2 && parts[0] == "pool" && parts[1] != "":
-		return acl.CanSee("/pool/" + parts[1])
+		return acl.CanRead("/pool/" + parts[1])
 	}
-	return acl.CanSee("/")
+	return acl.CanRead("/")
 }
 
-func FilterTasks(tasks []Task, acl ACL) []Task {
+func FilterTasks(tasks []Task, acl ACL, userid string) []Task {
 	if acl == nil {
 		return tasks
 	}
 	out := make([]Task, 0, len(tasks))
 	for _, t := range tasks {
-		if CanSeeTask(t, acl) {
+		if CanSeeTask(t, acl, userid) {
 			out = append(out, t)
 		}
 	}
 	return out
 }
 
-func CanSeeTask(t Task, acl ACL) bool {
+// CanSeeTask follows Proxmox: a task belongs to whoever started it, and anyone
+// else needs Sys.Audit on the node it ran on. A token's tasks are its owner's.
+func CanSeeTask(t Task, acl ACL, userid string) bool {
 	if acl == nil {
 		return true
 	}
-	if t.Node != "" && acl.CanSee("/nodes/"+t.Node) {
+	owner, node := t.User, t.Node
+	if owner == "" {
+		owner = upidUser(t.UPID)
+	}
+	if node == "" {
+		node = ParseUPIDNode(t.UPID)
+	}
+	if userid != "" && (owner == userid || strings.HasPrefix(owner, userid+"!")) {
 		return true
 	}
-	if t.ID != "" {
-		if vmid, err := strconv.Atoi(t.ID); err == nil && vmid > 0 && acl.CanSee(fmt.Sprintf("/vms/%d", vmid)) {
-			return true
-		}
+	if node == "" {
+		return acl.CanRead("/")
 	}
-	return acl.CanSee("/")
+	return acl.CanRead("/nodes/" + node)
+}
+
+// upidUser reads the user from UPID:<node>:<pid>:<pstart>:<starttime>:<type>:<id>:<user>:
+func upidUser(upid string) string {
+	if parts := strings.Split(upid, ":"); len(parts) >= 8 {
+		return parts[7]
+	}
+	return ""
 }
 
 func CanSeeGuestTopic(topic string, acl ACL) bool {
@@ -202,22 +227,17 @@ func CanSeeGuestTopic(topic string, acl ACL) bool {
 	// guest:node:kind:vmid
 	parts := strings.Split(topic, ":")
 	if len(parts) < 4 {
-		return acl.CanSee("/")
+		return acl.CanRead("/")
 	}
 	vmid, err := strconv.Atoi(parts[len(parts)-1])
 	if err != nil {
-		return acl.CanSee("/")
+		return acl.CanRead("/")
 	}
-	return acl.CanSee(fmt.Sprintf("/vms/%d", vmid))
+	return acl.CanRead(fmt.Sprintf("/vms/%d", vmid))
 }
 
-func CanSeeTaskTopic(topic string, acl ACL) bool {
-	if acl == nil {
-		return true
-	}
-	upid := strings.TrimPrefix(topic, "task:")
-	node, _, id := ParseUPID(upid)
-	return CanSeeTask(Task{UPID: upid, Node: node, ID: id}, acl)
+func CanSeeTaskTopic(topic string, acl ACL, userid string) bool {
+	return CanSeeTask(Task{UPID: strings.TrimPrefix(topic, "task:")}, acl, userid)
 }
 
 func CanSeeNodeTopic(topic string, acl ACL) bool {
@@ -226,9 +246,9 @@ func CanSeeNodeTopic(topic string, acl ACL) bool {
 	}
 	node := strings.TrimPrefix(topic, "node:")
 	if node == "" || node == topic {
-		return acl.CanSee("/")
+		return acl.CanRead("/")
 	}
-	return acl.CanSee("/nodes/" + node)
+	return acl.CanRead("/nodes/" + node)
 }
 
 func CanSeeRRDTopic(topic string, acl ACL) bool {
@@ -238,19 +258,19 @@ func CanSeeRRDTopic(topic string, acl ACL) bool {
 	rest := strings.TrimPrefix(topic, "rrd:")
 	parts := strings.Split(rest, ":")
 	if len(parts) < 2 {
-		return acl.CanSee("/")
+		return acl.CanRead("/")
 	}
 	switch parts[0] {
 	case "node":
-		return acl.CanSee("/nodes/" + parts[1])
+		return acl.CanRead("/nodes/" + parts[1])
 	case "qemu", "lxc":
 		if len(parts) >= 3 {
-			return acl.CanSee("/vms/" + parts[2])
+			return acl.CanRead("/vms/" + parts[2])
 		}
 	case "storage":
 		if len(parts) >= 3 {
-			return acl.CanSee("/storage/" + parts[2])
+			return acl.CanRead("/storage/" + parts[2])
 		}
 	}
-	return acl.CanSee("/")
+	return acl.CanRead("/")
 }
