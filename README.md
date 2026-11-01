@@ -112,6 +112,8 @@ services:
     image: ghcr.io/zypher-systems/hypervane-web:${HYPERVANE_VERSION:-latest}
     pull_policy: always
     restart: unless-stopped
+    environment:
+      HYPERVANE_TRUSTED_PROXIES: ${HYPERVANE_TRUSTED_PROXIES:-}
     ports:
       - "${HYPERVANE_HTTP_PORT:-3000}:80"
     depends_on:
@@ -141,9 +143,10 @@ You can also set these in `.env`:
 | --- | --- | --- |
 | `HYPERVANE_HTTP_PORT` | `3000` | Host port for the UI. The API is served behind it under `/api`. |
 | `HYPERVANE_VERSION` | `latest` | Image tag to run: `latest`, `main`, `X.Y.Z` or `sha-<commit>`. |
+| `HYPERVANE_TRUSTED_PROXIES` | empty | Addresses or CIDR ranges of your reverse proxies, separated by commas. Hypervane reads the real client address from `X-Forwarded-For` only on requests from these, and the proxy must set that header. |
 | `HYPERVANE_COOKIE_SECURE` | `true` | Marks session cookies secure, so sign-in only works over HTTPS. Put a TLS reverse proxy in front of the port, or set `false` to use plain HTTP on a trusted network. |
 
-Failed sign-ins are limited per client address and per account. A reverse proxy on a private network must pass the client's address in `X-Forwarded-For`, as Caddy, Traefik and nginx can. A proxy on a public address looks like one client to Hypervane, so everyone behind it shares that client's limit.
+Failed sign-ins are limited per client address and per account. Behind a reverse proxy, every client looks like the proxy until you list it in `HYPERVANE_TRUSTED_PROXIES`, so until then they all share one limit. List only your proxies: anything on that list can report any client address.
 
 Start it:
 

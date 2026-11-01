@@ -22,7 +22,11 @@ const (
 	loginMaxAccount = 30
 	loginMaxAddress = 60
 
+	// loginMaxKeys bounds the table. Live entries are never evicted to make
+	// room, or filling it would be a way to erase a lockout.
 	loginMaxKeys = 50_000
+
+	loginFullWait = time.Minute
 )
 
 // loginAttempt names what one sign-in counts against.
@@ -57,7 +61,7 @@ func (a loginAttempt) limits() []struct {
 	return []struct {
 		key string
 		max int
-	}{{a.pair, loginMaxPair}, {a.account, loginMaxAccount}, {a.address, loginMaxAddress}}
+	}{{a.account, loginMaxAccount}, {a.pair, loginMaxPair}, {a.address, loginMaxAddress}}
 }
 
 // loginLimiter counts failed sign-ins in memory, so a restart clears it and each
@@ -81,11 +85,13 @@ func (l *loginLimiter) take(a loginAttempt, now time.Time) (bool, time.Duration)
 	cut := now.Add(-loginWindow)
 	var wait time.Duration
 	for _, lim := range a.limits() {
-		kept := l.fails[lim.key]
+		kept, tracked := l.fails[lim.key]
 		for len(kept) > 0 && !kept[0].After(cut) {
 			kept = kept[1:]
 		}
-		l.fails[lim.key] = kept
+		if tracked {
+			l.fails[lim.key] = kept
+		}
 		if len(kept) >= lim.max {
 			if w := kept[len(kept)-lim.max].Add(loginWindow).Sub(now); w > wait {
 				wait = w
@@ -95,8 +101,15 @@ func (l *loginLimiter) take(a loginAttempt, now time.Time) (bool, time.Duration)
 	if wait > 0 {
 		return false, wait
 	}
+	// An account that can't be tracked can't be limited, so during a flood it
+	// waits. Accounts already tracked carry on.
+	if _, tracked := l.fails[a.account]; !tracked && len(l.fails) >= loginMaxKeys {
+		return false, loginFullWait
+	}
 	for _, lim := range a.limits() {
-		l.fails[lim.key] = append(l.fails[lim.key], now)
+		if _, tracked := l.fails[lim.key]; tracked || len(l.fails) < loginMaxKeys {
+			l.fails[lim.key] = append(l.fails[lim.key], now)
+		}
 	}
 	return true, 0
 }
@@ -127,9 +140,14 @@ func (l *loginLimiter) refund(key string) {
 	}
 }
 
-// sweep keeps the map from growing with every name an attacker tries.
+// sweep drops keys whose failures have all left the window. It runs more often
+// when the table is full, since nothing new can be tracked until it frees up.
 func (l *loginLimiter) sweep(now time.Time) {
-	if now.Sub(l.swept) < time.Minute && len(l.fails) < loginMaxKeys {
+	every := time.Minute
+	if len(l.fails) >= loginMaxKeys {
+		every = time.Second
+	}
+	if now.Sub(l.swept) < every {
 		return
 	}
 	l.swept = now
@@ -138,11 +156,5 @@ func (l *loginLimiter) sweep(now time.Time) {
 		if len(times) == 0 || !times[len(times)-1].After(cut) {
 			delete(l.fails, key)
 		}
-	}
-	for key := range l.fails {
-		if len(l.fails) < loginMaxKeys {
-			break
-		}
-		delete(l.fails, key)
 	}
 }
