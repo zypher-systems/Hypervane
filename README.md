@@ -1,8 +1,8 @@
 # Hypervane
 
-A modern Proxmox VE operations console. Hypervane is a Docker stack: a Go backend talks to one cluster over the official API, and a React UI streams live inventory, metrics, tasks, and consoles. The browser never holds a Proxmox ticket or token.
+A modern Proxmox VE operations console. Hypervane is a Docker stack: a Go backend talks to your clusters over the official API, and a React UI streams live inventory, metrics, tasks, and consoles. The browser never holds a Proxmox ticket or token.
 
-Version 3.2 grows Recipes and Scripts. Fleet, SSO, and MCP writes stay tabled; see [ROADMAP.md](ROADMAP.md).
+Version 3.3 is the first public release, with a calmer redesign, insights on the datacenter overview, and every feature included. Fleet, SSO, and MCP writes stay tabled; see [ROADMAP.md](ROADMAP.md).
 
 ![The Hypervane datacenter overview, with insights, node health and failover capacity](assets/screenshots/overview.png)
 
