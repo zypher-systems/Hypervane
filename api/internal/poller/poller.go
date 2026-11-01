@@ -105,7 +105,7 @@ func (p *Poller) watchedDetails(prefix string, conns []ConnectionClient) []watch
 	var out []watchedDetail
 	for _, topic := range p.watching(hub.ScopePrefix) {
 		id, detail, ok := hub.SplitTopic(topic)
-		if !ok || !strings.HasPrefix(detail, prefix) {
+		if !ok || !strings.HasPrefix(detail, prefix) || !pve.ValidTopic(detail) {
 			continue
 		}
 		if c := clients[id]; c != nil {
@@ -269,31 +269,20 @@ func (p *Poller) pollWatchedDetails(ctx context.Context) {
 
 func (p *Poller) pollWatchedRRD(ctx context.Context) {
 	for _, w := range p.watchedDetails("rrd:", p.clients()) {
-		parts := splitN(w.detail, 3)
-		if len(parts) != 3 {
-			continue
-		}
-		kind, id, tf := parts[0], parts[1], parts[2]
+		parts := strings.Split(w.detail, ":")
+		tf := parts[len(parts)-1]
 		var (
 			data []pve.RRDPoint
 			err  error
 		)
-		switch kind {
+		switch parts[0] {
 		case "node":
-			data, err = w.client.NodeRRD(ctx, id, tf)
+			data, err = w.client.NodeRRD(ctx, parts[1], tf)
 		case "qemu", "lxc":
-			np := splitN(id, 2)
-			if len(np) != 2 {
-				continue
-			}
-			vmid, _ := strconv.Atoi(np[1])
-			data, err = w.client.GuestRRD(ctx, np[0], kind, vmid, tf)
+			vmid, _ := strconv.Atoi(parts[2])
+			data, err = w.client.GuestRRD(ctx, parts[1], parts[0], vmid, tf)
 		case "storage":
-			np := splitN(id, 2)
-			if len(np) != 2 {
-				continue
-			}
-			data, err = w.client.StorageRRD(ctx, np[0], np[1], tf)
+			data, err = w.client.StorageRRD(ctx, parts[1], parts[2], tf)
 		}
 		if err != nil {
 			continue

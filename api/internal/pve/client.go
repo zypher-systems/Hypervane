@@ -166,6 +166,13 @@ func (c *Client) Permissions(ctx context.Context) (map[string]any, error) {
 	return perms, err
 }
 
+// PermissionsAt returns the user's effective rights on one path.
+func (c *Client) PermissionsAt(ctx context.Context, path string) (map[string]any, error) {
+	var perms map[string]any
+	err := c.do(ctx, http.MethodGet, "/access/permissions?"+url.Values{"path": {path}}.Encode(), nil, &perms)
+	return perms, err
+}
+
 func (c *Client) ClusterStatus(ctx context.Context) ([]ClusterStatus, error) {
 	var out []ClusterStatus
 	err := c.do(ctx, http.MethodGet, "/cluster/status", nil, &out)
@@ -207,7 +214,7 @@ func (c *Client) NodeRRD(ctx context.Context, node, timeframe string) ([]RRDPoin
 }
 
 func (c *Client) guestBase(node, kind string, vmid int) string {
-	return "/nodes/" + url.PathEscape(node) + "/" + kind + "/" + strconv.Itoa(vmid)
+	return "/nodes/" + url.PathEscape(node) + "/" + url.PathEscape(kind) + "/" + strconv.Itoa(vmid)
 }
 
 func (c *Client) GuestStatus(ctx context.Context, node, kind string, vmid int) (GuestStatus, error) {

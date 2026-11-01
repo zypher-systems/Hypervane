@@ -363,6 +363,8 @@ Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.0. 
 - Limit failed sign-ins per address and account, and cap sign-in bodies
 - Logout ends the session, closes its sockets, and clears the client's state
 - Requests never fall back to another cluster; live topics name their connection
+- Read checks on cached data follow Proxmox's own answer for the viewer, including `NoAccess` and non-propagating grants
+- Live topics must match their exact shape before the ACL check or the poller sees them
 - Safe MetricChart tooltips
 - Route error boundary and 401 bounce
 
@@ -388,7 +390,6 @@ Remaining stale UI, then leftover realtime majors. Branch `3.3.1-patch`.
 - Shared EmptyState that takes query status (HV-008, HV-026)
 - Notes draft reset, storage filter reset, formatting and copy (HV-009–015, HV-020, HV-022)
 - Console write deadlines, task-log resume, poller workers, inventory change-suppression, system-CA TLS verify, audit quality
-- Honor `NoAccess` below a broader grant on cached data: `/access/permissions` omits a path with no rights, so a grant on `/` still reaches a guest denied on `/vms/<id>`
 - Minors after this cut. Alerts stay the first Pro hole once the window closes.
 
 ## Tabled after 3.1

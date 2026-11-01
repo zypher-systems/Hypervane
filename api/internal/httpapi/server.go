@@ -28,6 +28,9 @@ import (
 
 const sessionCookie = "hv_session"
 
+// ttlViewerACL keeps a page that makes many requests from repeating the lookup.
+const ttlViewerACL = 5 * time.Second
+
 type Server struct {
 	cfg    config.Config
 	store  *store.Store
@@ -40,6 +43,7 @@ type Server struct {
 	defaultID string
 
 	insightCache ttlCache
+	aclCache     ttlCache
 
 	scriptsOnce sync.Once
 	scriptJobs  *scripts.Jobs
@@ -837,15 +841,17 @@ func (s *Server) requestACL(r *http.Request) (pve.ACL, bool) {
 		return nil, false
 	}
 	sess, _ := r.Context().Value(sessionKey).(store.Session)
-	c, err := s.ticketClient(r.Context(), sess, user)
+	acl, err := cachedFetch(&s.aclCache, sess.ID, ttlViewerACL, func() (pve.ACL, error) {
+		c, err := s.ticketClient(r.Context(), sess, user)
+		if err != nil {
+			return nil, err
+		}
+		return c.ViewerACL(r.Context())
+	})
 	if err != nil {
 		return pve.ACL{}, true
 	}
-	raw, err := c.Permissions(r.Context())
-	if err != nil {
-		return pve.ACL{}, true
-	}
-	return pve.NormalizePermissions(raw), true
+	return acl, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

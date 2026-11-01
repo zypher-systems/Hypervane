@@ -1,13 +1,19 @@
 package pve
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestNormalizeAndHasPriv(t *testing.T) {
 	acl := NormalizePermissions(map[string]any{
 		"/":           map[string]any{"Sys.Audit": 1.0},
-		"/vms":        map[string]any{"VM.Audit": 1.0},
-		"/vms/100":    map[string]any{"VM.PowerMgmt": 1.0, "VM.Config.Disk": 1.0},
-		"/nodes/pve1": map[string]any{"Sys.Console": true},
+		"/vms":        map[string]any{"Sys.Audit": 1.0, "VM.Audit": 1.0},
+		"/vms/100":    map[string]any{"Sys.Audit": 1.0, "VM.Audit": 1.0, "VM.PowerMgmt": 1.0, "VM.Config.Disk": 1.0},
+		"/nodes/pve1": map[string]any{"Sys.Audit": 1.0, "Sys.Console": true},
 	})
 	if !acl.Has("/vms/100", "VM.PowerMgmt") {
 		t.Fatal("exact priv")
@@ -16,10 +22,10 @@ func TestNormalizeAndHasPriv(t *testing.T) {
 		t.Fatal("prefix priv VM.Config")
 	}
 	if !acl.Has("/vms/100", "VM.Audit") {
-		t.Fatal("inherited from /vms")
+		t.Fatal("listed on the path itself")
 	}
 	if !acl.Has("/vms/200", "Sys.Audit") {
-		t.Fatal("inherited from /")
+		t.Fatal("an unlisted guest takes what /vms passes down")
 	}
 	if acl.Has("/vms/200", "VM.PowerMgmt") {
 		t.Fatal("should not have power on 200")
@@ -207,5 +213,114 @@ func TestCanSeeTaskFollowsProxmox(t *testing.T) {
 	}
 	if CanSeeTask(token, ACL{}, "alice@pv") {
 		t.Error("a name prefix is not ownership")
+	}
+}
+
+// A topic is read by the ACL and fetched by the poller. Anything that could
+// mean one guest to the first and another to the second has to be refused.
+func TestCraftedTopicsAreRefused(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{
+		"/vms/100":    map[string]any{"VM.Audit": 1.0},
+		"/nodes/pve1": map[string]any{"Sys.Audit": 1.0},
+	})
+	for _, topic := range []string{
+		"guest:pve1:qemu/200/status/current#:100",
+		"guest:pve1:qemu/200/status/current?x=:100",
+		"guest:pve1:qemu%2f200:100",
+		"guest:pve1/../pve2:qemu:100",
+		"guest:pve1:qemu:100:extra",
+		"guest:pve1:qemu:0100",
+		"guest:pve1:qemu:100x",
+		"guest:pve1:bogus:100",
+		"guest::qemu:100",
+	} {
+		if CanSeeGuestTopic(topic, acl) {
+			t.Errorf("%q passed as VM 100", topic)
+		}
+		if CanSeeGuestTopic(topic, nil) {
+			t.Errorf("%q reached an unrestricted viewer", topic)
+		}
+	}
+	for _, topic := range []string{"node:pve1/../pve2", "node:pve1#", "node:pve1:extra"} {
+		if CanSeeNodeTopic(topic, acl) {
+			t.Errorf("%q passed as pve1", topic)
+		}
+	}
+	if !CanSeeGuestTopic("guest:pve1:qemu:100", acl) || !CanSeeGuestTopic("guest:pve1:lxc:100", acl) {
+		t.Fatal("real guest topics must still pass")
+	}
+}
+
+// Proxmox's value is the propagate flag, so 0 still means the right is held.
+func TestNonPropagatingGrants(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{
+		"/vms/200": map[string]any{"VM.Audit": 0.0},
+		"/":        map[string]any{"Sys.Audit": 0.0},
+	})
+	if !acl.CanRead("/vms/200") {
+		t.Fatal("a grant that doesn't propagate is still held on its own path")
+	}
+	if !acl.Has("/", "Sys.Audit") {
+		t.Fatal("the same goes for /")
+	}
+	if acl.Has("/nodes/pve1", "Sys.Audit") {
+		t.Fatal("it must not reach anything below")
+	}
+}
+
+func TestViewerACLUsesProxmoxsOwnAnswers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var data any = []any{}
+		switch {
+		case r.URL.Path == "/api2/json/access/permissions" && r.URL.Query().Get("path") == "/nodes/pve1":
+			data = map[string]any{"/nodes/pve1": map[string]any{"Sys.Audit": 1}}
+		case r.URL.Path == "/api2/json/access/permissions" && r.URL.Query().Get("path") == "/nodes/pve2":
+			data = map[string]any{"/nodes/pve2": map[string]any{}}
+		case r.URL.Path == "/api2/json/access/permissions":
+			data = map[string]any{"/": map[string]any{"Sys.Audit": 1, "VM.Audit": 1, "Datastore.Audit": 1}, "/vms": map[string]any{"VM.Audit": 1}}
+		case r.URL.Path == "/api2/json/cluster/resources":
+			data = []map[string]any{
+				{"id": "node/pve1", "type": "node", "node": "pve1"},
+				{"id": "node/pve2", "type": "node", "node": "pve2"},
+				{"id": "qemu/100", "type": "qemu", "vmid": 100, "node": "pve1"},
+				{"id": "storage/pve1/local", "type": "storage", "storage": "local", "node": "pve1"},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer srv.Close()
+	c, err := New(Options{BaseURL: srv.URL, Ticket: "PVE:alice@pve:x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := c.ViewerACL(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{
+		"/vms/100":       true,
+		"/vms/200":       false, // NoAccess: not in the viewer's own list
+		"/storage/local": true,
+		"/storage/nfs":   false,
+		"/nodes/pve1":    true,
+		"/nodes/pve2":    false, // NoAccess: the exact lookup is empty, despite /
+	} {
+		if got := acl.CanRead(path); got != want {
+			t.Errorf("%s: got %v", path, got)
+		}
+	}
+	if !acl.Has("/", "Sys.Audit") {
+		t.Fatal("rights that resources doesn't answer for must stay")
+	}
+}
+
+func TestSDNFollowsItsZone(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{"/sdn/zones/lab": map[string]any{"SDN.Audit": 1.0}})
+	got := FilterResources([]Resource{
+		{ID: "sdn/pve1/lab", Type: "sdn"},
+		{ID: "sdn/pve1/other", Type: "sdn"},
+	}, acl)
+	if len(got) != 1 || got[0].ID != "sdn/pve1/lab" {
+		t.Fatalf("%+v", got)
 	}
 }
