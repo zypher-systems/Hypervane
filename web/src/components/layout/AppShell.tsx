@@ -5,7 +5,7 @@ import { TreeBulkBar } from "@/components/tree/TreeBulkBar";
 import { TaskDrawer } from "@/components/tasks/TaskDrawer";
 import { Button } from "@/components/ui/button";
 import { ToastViewport } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { api, UNAUTHORIZED_EVENT } from "@/lib/api";
 import { getActiveConnection, onActiveConnection, setActiveConnection } from "@/lib/connection";
 import { clearSelection } from "@/lib/selection";
 import { focusInventorySearch } from "@/lib/inventorySearch";
@@ -54,6 +54,26 @@ export function AppShell({
       void nav({ to: "/settings" });
     }
   }, [kind, clusterConfigured, pathname, nav]);
+
+  useEffect(() => {
+    // A 401 can come from Proxmox and say nothing about this session, as a
+    // wrong root password does, so ask the API before signing anyone out.
+    let checking = false;
+    const onUnauthorized = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const me = await api.me();
+        if (!me.user) void nav({ to: "/login" });
+      } catch {
+        /* Unreachable: the next request that fails will ask again. */
+      } finally {
+        checking = false;
+      }
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [nav]);
 
   useEffect(() => {
     if (!connections.data) return;

@@ -1,4 +1,5 @@
 import { bytes, bytesRate, ops, USAGE_OK, usageHex } from "@/lib/format";
+import { fillChartTooltip } from "@/lib/chartTooltip";
 import { useEffect, useRef, useState } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
@@ -158,15 +159,14 @@ export function MetricChart({
               tip.hidden = true;
               return;
             }
-            const rows = seriesRef.current.map((s, i) => {
+            fillChartTooltip(tip, fmtTime(Number(t)), seriesRef.current.map((s, i) => {
               const v = u.data[i + 1][idx];
-              const swatch = v == null ? s.color : threshold ? usageHex(Number(v)) : s.color;
-              return `<div class="flex items-center justify-between gap-6">
-                <span class="flex items-center gap-1.5"><span class="h-1.5 w-1.5 rounded-full" style="background:${swatch}"></span>${s.label}</span>
-                <span class="font-mono">${v == null ? "—" : fmtY(Number(v), format)}</span>
-              </div>`;
-            }).join("");
-            tip.innerHTML = `<div class="mb-1 text-[11px] text-ink-dim">${fmtTime(Number(t))}</div>${rows}`;
+              return {
+                label: s.label,
+                value: v == null ? "—" : fmtY(Number(v), format),
+                color: v == null ? s.color : threshold ? usageHex(Number(v)) : s.color,
+              };
+            }));
             tip.hidden = false;
             const origin = u.over.getBoundingClientRect();
             const tw = tip.offsetWidth;
