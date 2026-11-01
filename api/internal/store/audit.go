@@ -25,16 +25,23 @@ func (s *Store) InsertAudit(ctx context.Context, ev AuditEvent) error {
 	return err
 }
 
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]AuditEvent, error) {
+// AuditFilter narrows ListAudit. An empty field matches every event.
+type AuditFilter struct {
+	ConnectionID string
+	Username     string
+}
+
+func (s *Store) ListAudit(ctx context.Context, limit int, filter AuditFilter) ([]AuditEvent, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, at, username, user_kind, connection_id, method, path, status, upid
 		FROM audit_events
+		WHERE ($2 = '' OR connection_id = $2) AND ($3 = '' OR username = $3)
 		ORDER BY at DESC
 		LIMIT $1
-	`, limit)
+	`, limit, filter.ConnectionID, filter.Username)
 	if err != nil {
 		return nil, err
 	}

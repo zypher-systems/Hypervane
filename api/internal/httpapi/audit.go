@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"hypervane/internal/pve"
 	"hypervane/internal/store"
 )
 
@@ -66,8 +67,24 @@ func (s *Server) auditMutations(next http.Handler) http.Handler {
 	})
 }
 
+// auditScope limits the log for a Proxmox user: only their own connection, and
+// only their own actions unless they hold Sys.Audit at the root of it.
+func auditScope(user store.User, sess store.Session, acl pve.ACL) store.AuditFilter {
+	if user.Kind != store.UserKindPVE {
+		return store.AuditFilter{}
+	}
+	filter := store.AuditFilter{ConnectionID: sess.ConnectionID}
+	if !acl.Has("/", "Sys.Audit") {
+		filter.Username = user.Username
+	}
+	return filter
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.store.ListAudit(r.Context(), 200)
+	user, _ := r.Context().Value(userKey).(store.User)
+	sess, _ := r.Context().Value(sessionKey).(store.Session)
+	acl, _ := s.requestACL(r)
+	rows, err := s.store.ListAudit(r.Context(), 200, auditScope(user, sess, acl))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -84,9 +101,17 @@ func (s *Server) handleMetricHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "key is required")
 		return
 	}
+	conn, c := s.connectionOrError(w, r)
+	if c == nil {
+		return
+	}
+	if acl, _ := s.requestACL(r); !pve.CanSeeResourceID(key, acl) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
 	from, _ := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
 	to, _ := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
-	rows, err := s.store.QueryMetricHistory(r.Context(), s.requestConnectionID(r), key, from, to)
+	rows, err := s.store.QueryMetricHistory(r.Context(), conn, key, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

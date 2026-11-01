@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { api } from "@/lib/api";
-import { live } from "@/lib/ws";
+import { useLiveTopic } from "@/lib/liveTopic";
 import { relTime } from "@/lib/format";
 import type { Task, TaskLogLine } from "@/types";
 import { ChevronDown, ChevronUp, ListTodo } from "lucide-react";
@@ -75,25 +75,18 @@ export function TaskDrawer({
   }, [onSelect]);
 
   useEffect(() => {
-    if (!activeUpid) {
-      setLog([]);
-      setLogTotal(0);
-      setStatus("");
-      return;
-    }
-    live.subscribe([`task:${activeUpid}`]);
-    const off = live.on((topic, data) => {
-      if (topic !== `task:${activeUpid}`) return;
-      const payload = data as { status?: { status?: string; exitstatus?: string }; log?: TaskLogLine[]; total?: number };
-      setStatus(payload.status?.exitstatus || payload.status?.status || "");
-      if (payload.log) setLog(payload.log);
-      setLogTotal(payload.total ?? 0);
-    });
-    return () => {
-      off();
-      live.unsubscribe([`task:${activeUpid}`]);
-    };
+    if (activeUpid) return;
+    setLog([]);
+    setLogTotal(0);
+    setStatus("");
   }, [activeUpid]);
+
+  useLiveTopic(activeUpid ? `task:${activeUpid}` : null, (data) => {
+    const payload = data as { status?: { status?: string; exitstatus?: string }; log?: TaskLogLine[]; total?: number };
+    setStatus(payload.status?.exitstatus || payload.status?.status || "");
+    if (payload.log) setLog(payload.log);
+    setLogTotal(payload.total ?? 0);
+  });
 
   const ordered = useMemo(
     () => [...tasks].sort((a, b) => (b.starttime ?? 0) - (a.starttime ?? 0) || a.upid.localeCompare(b.upid)),

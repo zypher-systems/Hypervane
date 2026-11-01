@@ -1,8 +1,41 @@
 # Hypervane
 
-A modern Proxmox VE operations console. Hypervane is a Docker stack: a Go backend talks to one cluster over the official API, and a React UI streams live inventory, metrics, tasks, and consoles. The browser never holds a Proxmox ticket or token.
+A modern Proxmox VE operations console. Hypervane is a Docker stack: a Go backend talks to your clusters over the official API, and a React UI streams live inventory, metrics, tasks, and consoles. The browser never holds a Proxmox ticket or token.
 
-Version 3.2 grows Recipes and Scripts. Fleet, SSO, and MCP writes stay tabled; see [ROADMAP.md](ROADMAP.md).
+Version 3.3 is the first public release, with a calmer redesign, insights on the datacenter overview, and every feature included. Fleet, SSO, and MCP writes stay tabled; see [ROADMAP.md](ROADMAP.md).
+
+![The Hypervane datacenter overview, with insights, node health and failover capacity](assets/screenshots/overview.png)
+
+## Screenshots
+
+These show simulated clusters, so every name, address and number in them is invented. Select an image to see it at full size.
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="assets/screenshots/guest.png"><img src="assets/screenshots/guest.png" alt="A guest's live status, details and history charts"></a></td>
+    <td width="50%" valign="top"><a href="assets/screenshots/top.png"><img src="assets/screenshots/top.png" alt="The Top 10 page ranking the busiest guests by CPU"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Guests.</strong> Live status, details, and history for every guest.</td>
+    <td><strong>Top 10.</strong> The guests putting the most pressure on the cluster.</td>
+  </tr>
+  <tr>
+    <td><a href="assets/screenshots/recipes.png"><img src="assets/screenshots/recipes.png" alt="The Recipes page with a form for a Debian cloud template"></a></td>
+    <td><a href="assets/screenshots/backups.png"><img src="assets/screenshots/backups.png" alt="Backup coverage listing each guest and its last backup"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Recipes.</strong> Common jobs that show their exact steps before they run.</td>
+    <td><strong>Backups.</strong> Which guests are covered, and when each last ran.</td>
+  </tr>
+  <tr>
+    <td><a href="assets/screenshots/storage.png"><img src="assets/screenshots/storage.png" alt="A storage page with usage history and its volumes"></a></td>
+    <td><a href="assets/screenshots/tasks.png"><img src="assets/screenshots/tasks.png" alt="The task drawer streaming the log of a live migration"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Storage.</strong> Usage over time and everything stored there.</td>
+    <td><strong>Tasks.</strong> Running work with its log streaming as it happens.</td>
+  </tr>
+</table>
 
 ## Stack
 
@@ -79,6 +112,8 @@ services:
     image: ghcr.io/zypher-systems/hypervane-web:${HYPERVANE_VERSION:-latest}
     pull_policy: always
     restart: unless-stopped
+    environment:
+      HYPERVANE_TRUSTED_PROXIES: ${HYPERVANE_TRUSTED_PROXIES:-}
     ports:
       - "${HYPERVANE_HTTP_PORT:-3000}:80"
     depends_on:
@@ -108,7 +143,10 @@ You can also set these in `.env`:
 | --- | --- | --- |
 | `HYPERVANE_HTTP_PORT` | `3000` | Host port for the UI. The API is served behind it under `/api`. |
 | `HYPERVANE_VERSION` | `latest` | Image tag to run: `latest`, `main`, `X.Y.Z` or `sha-<commit>`. |
+| `HYPERVANE_TRUSTED_PROXIES` | empty | Addresses or CIDR ranges of your reverse proxies, separated by commas. Hypervane reads the real client address from `X-Forwarded-For` only on requests from these, and the proxy must set that header. |
 | `HYPERVANE_COOKIE_SECURE` | `true` | Marks session cookies secure, so sign-in only works over HTTPS. Put a TLS reverse proxy in front of the port, or set `false` to use plain HTTP on a trusted network. |
+
+Failed sign-ins are limited per client address and per account. Behind a reverse proxy, every client looks like the proxy until you list it in `HYPERVANE_TRUSTED_PROXIES`, so until then they all share one limit. List only your proxies: anything on that list can report any client address.
 
 Start it:
 

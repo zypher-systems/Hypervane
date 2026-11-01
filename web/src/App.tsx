@@ -1,5 +1,7 @@
 import { AppShell } from "@/components/layout/AppShell";
+import { RouteError } from "@/components/layout/RouteError";
 import { api } from "@/lib/api";
+import { resetClientState } from "@/lib/session";
 import { BackupsPage } from "@/pages/Backups";
 import { CreateGuestPage } from "@/pages/CreateGuest";
 import { HAPage } from "@/pages/HA";
@@ -46,6 +48,9 @@ const setupRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
+  // Signing out and an expired session both land here, so the next account
+  // never sees what the last one had cached.
+  beforeLoad: () => resetClientState(queryClient),
   component: LoginPage,
 });
 
@@ -240,9 +245,7 @@ const router = createRouter({
   defaultPendingComponent: () => (
     <div className="grid h-full place-items-center text-sm text-ink-dim">Loading Hypervane…</div>
   ),
-  defaultErrorComponent: ({ error }) => (
-    <div className="grid h-full place-items-center p-8 text-sm text-rose-400">{error.message}</div>
-  ),
+  defaultErrorComponent: RouteError,
 });
 
 declare module "@tanstack/react-router" {

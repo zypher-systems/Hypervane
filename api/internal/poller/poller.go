@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,6 +79,37 @@ func (p *Poller) watching(prefix string) []string {
 	for k, n := range p.watchers {
 		if n > 0 && len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// watchedDetail is a live detail topic and the cluster that answers it.
+type watchedDetail struct {
+	topic  string
+	detail string
+	client *pve.Client
+}
+
+// watchedDetails lists the watched topics whose detail part starts with prefix.
+// Each is polled on the connection it names and no other, because two clusters
+// can share node names and VMIDs. Topics for a connection that has gone away
+// are skipped.
+func (p *Poller) watchedDetails(prefix string, conns []ConnectionClient) []watchedDetail {
+	clients := make(map[string]*pve.Client, len(conns))
+	for _, cc := range conns {
+		if cc.Client != nil {
+			clients[cc.ID] = cc.Client
+		}
+	}
+	var out []watchedDetail
+	for _, topic := range p.watching(hub.ScopePrefix) {
+		id, detail, ok := hub.SplitTopic(topic)
+		if !ok || !strings.HasPrefix(detail, prefix) || !pve.ValidTopic(detail) {
+			continue
+		}
+		if c := clients[id]; c != nil {
+			out = append(out, watchedDetail{topic: topic, detail: strings.TrimPrefix(detail, prefix), client: c})
 		}
 	}
 	return out
@@ -194,112 +226,68 @@ func (p *Poller) pollTasks(ctx context.Context) {
 		p.hub.Publish(ctx, "tasks", map[string]any{"connection": cc.ID, "tasks": tasks})
 	}
 
-	for _, topic := range p.watching("task:") {
-		upid := topic[len("task:"):]
+	for _, w := range p.watchedDetails("task:", conns) {
+		upid := w.detail
 		node := pve.ParseUPIDNode(upid)
 		if node == "" {
 			continue
 		}
-		for _, cc := range conns {
-			if cc.Client == nil {
-				continue
-			}
-			st, err := cc.Client.TaskStatus(ctx, node, upid)
-			if err != nil {
-				continue
-			}
-			lines, total, err := cc.Client.TaskLogTail(ctx, node, upid, 500)
-			if err != nil {
-				lines = nil
-			}
-			p.hub.Publish(ctx, topic, map[string]any{"status": st, "log": lines, "total": total})
-			break
+		st, err := w.client.TaskStatus(ctx, node, upid)
+		if err != nil {
+			continue
 		}
+		lines, total, err := w.client.TaskLogTail(ctx, node, upid, 500)
+		if err != nil {
+			lines = nil
+		}
+		p.hub.Publish(ctx, w.topic, map[string]any{"status": st, "log": lines, "total": total})
 	}
 }
 
 func (p *Poller) pollWatchedDetails(ctx context.Context) {
 	conns := p.clients()
-	if len(conns) == 0 {
-		return
-	}
-	for _, topic := range p.watching("node:") {
-		node := topic[len("node:"):]
-		for _, cc := range conns {
-			if cc.Client == nil {
-				continue
-			}
-			st, err := cc.Client.NodeStatus(ctx, node)
-			if err != nil {
-				continue
-			}
-			p.hub.Publish(ctx, topic, st)
-			break
+	for _, w := range p.watchedDetails("node:", conns) {
+		st, err := w.client.NodeStatus(ctx, w.detail)
+		if err != nil {
+			continue
 		}
+		p.hub.Publish(ctx, w.topic, st)
 	}
-	for _, topic := range p.watching("guest:") {
-		parts := splitN(topic[len("guest:"):], 3)
+	for _, w := range p.watchedDetails("guest:", conns) {
+		parts := splitN(w.detail, 3)
 		if len(parts) != 3 {
 			continue
 		}
 		vmid, _ := strconv.Atoi(parts[2])
-		for _, cc := range conns {
-			if cc.Client == nil {
-				continue
-			}
-			st, err := cc.Client.GuestStatus(ctx, parts[0], parts[1], vmid)
-			if err != nil {
-				continue
-			}
-			p.hub.Publish(ctx, topic, st)
-			break
+		st, err := w.client.GuestStatus(ctx, parts[0], parts[1], vmid)
+		if err != nil {
+			continue
 		}
+		p.hub.Publish(ctx, w.topic, st)
 	}
 }
 
 func (p *Poller) pollWatchedRRD(ctx context.Context) {
-	conns := p.clients()
-	if len(conns) == 0 {
-		return
-	}
-	for _, topic := range p.watching("rrd:") {
-		rest := topic[len("rrd:"):]
-		parts := splitN(rest, 3)
-		if len(parts) != 3 {
+	for _, w := range p.watchedDetails("rrd:", p.clients()) {
+		parts := strings.Split(w.detail, ":")
+		tf := parts[len(parts)-1]
+		var (
+			data []pve.RRDPoint
+			err  error
+		)
+		switch parts[0] {
+		case "node":
+			data, err = w.client.NodeRRD(ctx, parts[1], tf)
+		case "qemu", "lxc":
+			vmid, _ := strconv.Atoi(parts[2])
+			data, err = w.client.GuestRRD(ctx, parts[1], parts[0], vmid, tf)
+		case "storage":
+			data, err = w.client.StorageRRD(ctx, parts[1], parts[2], tf)
+		}
+		if err != nil {
 			continue
 		}
-		kind, id, tf := parts[0], parts[1], parts[2]
-		for _, cc := range conns {
-			if cc.Client == nil {
-				continue
-			}
-			var (
-				data []pve.RRDPoint
-				err  error
-			)
-			switch kind {
-			case "node":
-				data, err = cc.Client.NodeRRD(ctx, id, tf)
-			case "qemu", "lxc":
-				np := splitN(id, 2)
-				if len(np) != 2 {
-					continue
-				}
-				vmid, _ := strconv.Atoi(np[1])
-				data, err = cc.Client.GuestRRD(ctx, np[0], kind, vmid, tf)
-			case "storage":
-				np := splitN(id, 2)
-				if len(np) != 2 {
-					continue
-				}
-				data, err = cc.Client.StorageRRD(ctx, np[0], np[1], tf)
-			}
-			if err != nil {
-				continue
-			}
-			p.hub.Publish(ctx, topic, data)
-			break
-		}
+		p.hub.Publish(ctx, w.topic, data)
 	}
 }
 

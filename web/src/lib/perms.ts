@@ -41,10 +41,10 @@ export function useCan() {
   return (path: string, priv: string) => can(ctx.kind, ctx.permissions, path, priv, ctx.tokenScoped);
 }
 
-/** True when any path grants something beyond read access. */
+/** True when any path grants something beyond read access. A value is only Proxmox's propagate flag. */
 export function hasWritePrivilege(perms: Permissions): boolean {
   return Object.values(perms ?? {}).some((privs) =>
-    Object.entries(privs ?? {}).some(([priv, on]) => !!on && !priv.endsWith(".Audit") && priv !== "Sys.Syslog"),
+    Object.keys(privs ?? {}).some((priv) => !priv.endsWith(".Audit") && priv !== "Sys.Syslog"),
   );
 }
 

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { attachTask, finishTask, hasPendingTask, isTaskFinished } from "./tasks.ts";
+import { attachTask, clearPendingTasks, finishTask, hasPendingTask, isTaskFinished } from "./tasks.ts";
 
 describe("task completion", () => {
+  it("forgets pending tasks when cleared", () => {
+    attachTask("UPID:pve1:clear", [["summary"]]);
+    clearPendingTasks();
+    assert.equal(hasPendingTask("UPID:pve1:clear"), false);
+  });
+
   it("is finished when exitstatus or endtime is set", () => {
     assert.equal(isTaskFinished({ status: "running" }), false);
     assert.equal(isTaskFinished({}), false);

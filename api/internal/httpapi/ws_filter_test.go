@@ -4,61 +4,111 @@ import (
 	"encoding/json"
 	"testing"
 
+	"hypervane/internal/hub"
 	"hypervane/internal/pve"
 )
 
-func TestFilterHubMessage(t *testing.T) {
-	acl := pve.NormalizePermissions(map[string]any{
-		"/vms/100": map[string]any{"VM.Audit": 1.0},
+const (
+	labA = "lab-a"
+	labB = "lab-b"
+)
+
+func vm100ACL() pve.ACL {
+	return pve.NormalizePermissions(map[string]any{
+		"/vms/100":    map[string]any{"VM.Audit": 1.0},
+		"/nodes/pve1": map[string]any{"Sys.Audit": 1.0},
 	})
-	raw, _ := json.Marshal(map[string]any{
-		"type":  "event",
-		"topic": "resources",
-		"data": map[string]any{
-			"resources": []pve.Resource{
-				{ID: "cluster/c", Type: "cluster"},
-				{ID: "qemu/100", Type: "qemu", VMID: 100},
-				{ID: "qemu/200", Type: "qemu", VMID: 200},
-			},
+}
+
+func testViewer(acl pve.ACL) socketViewer {
+	return socketViewer{acl: acl, connection: labA, userid: "alice@pve"}
+}
+
+func hubEvent(t *testing.T, topic string, data any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"type": "event", "topic": topic, "data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestFilterHubMessageResources(t *testing.T) {
+	raw := hubEvent(t, "resources", map[string]any{
+		"connection": labA,
+		"ts":         1234,
+		"status": []pve.ClusterStatus{
+			{Type: "cluster", Name: "lab", Quorate: 1},
+			{Type: "node", Name: "pve1", IP: "10.0.0.1"},
+			{Type: "node", Name: "pve2", IP: "10.0.0.2"},
+		},
+		"resources": []pve.Resource{
+			{ID: "cluster/c", Type: "cluster"},
+			{ID: "qemu/100", Type: "qemu", VMID: 100},
+			{ID: "qemu/200", Type: "qemu", VMID: 200},
 		},
 	})
-	out, keep := filterHubMessage(raw, acl)
+	out, keep := filterHubMessage(raw, testViewer(vm100ACL()))
 	if !keep {
 		t.Fatal("keep resources")
 	}
 	var ev struct {
 		Data struct {
-			Resources []pve.Resource `json:"resources"`
+			Connection string              `json:"connection"`
+			TS         int64               `json:"ts"`
+			Status     []pve.ClusterStatus `json:"status"`
+			Resources  []pve.Resource      `json:"resources"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out, &ev); err != nil {
 		t.Fatal(err)
 	}
+	if ev.Data.Connection != labA || ev.Data.TS != 1234 {
+		t.Fatalf("envelope lost: %+v", ev.Data)
+	}
 	if len(ev.Data.Resources) != 2 {
 		t.Fatalf("got %d resources", len(ev.Data.Resources))
 	}
-	guest, _ := json.Marshal(map[string]any{"type": "event", "topic": "guest:pve1:qemu:200", "data": map[string]any{}})
-	if _, keep := filterHubMessage(guest, acl); keep {
-		t.Fatal("guest 200 should drop")
+	if len(ev.Data.Status) != 2 || ev.Data.Status[1].Name != "pve1" {
+		t.Fatalf("status %+v", ev.Data.Status)
+	}
+}
+
+// A matching VMID on another cluster is a different guest.
+func TestFilterHubMessageDropsOtherConnections(t *testing.T) {
+	tasks := []pve.Task{{UPID: "UPID:pve1:1:1:1:qmstart:100:user@pam:", Node: "pve1", ID: "100"}}
+	resources := []pve.Resource{{ID: "qemu/100", Type: "qemu", VMID: 100}}
+	cases := map[string][]byte{
+		"tasks elsewhere":        hubEvent(t, "tasks", map[string]any{"connection": labB, "tasks": tasks}),
+		"tasks unattributed":     hubEvent(t, "tasks", map[string]any{"tasks": tasks}),
+		"bare task array":        hubEvent(t, "tasks", tasks),
+		"resources elsewhere":    hubEvent(t, "resources", map[string]any{"connection": labB, "resources": resources}),
+		"resources unattributed": hubEvent(t, "resources", map[string]any{"resources": resources}),
+		"resources malformed":    hubEvent(t, "resources", "not-a-payload"),
+		"guest elsewhere":        hubEvent(t, hub.ScopedTopic(labB, "guest:pve1:qemu:100"), map[string]any{}),
+		"node elsewhere":         hubEvent(t, hub.ScopedTopic(labB, "node:pve1"), map[string]any{}),
+		"task elsewhere":         hubEvent(t, hub.ScopedTopic(labB, "task:UPID:pve1:1:1:1:qmstart:100:user@pam:"), map[string]any{}),
+		"bare guest":             hubEvent(t, "guest:pve1:qemu:100", map[string]any{}),
+		"bare node":              hubEvent(t, "node:pve1", map[string]any{}),
+		"unknown topic":          hubEvent(t, "something-new", map[string]any{}),
+		"not json":               []byte("{"),
+	}
+	for name, raw := range cases {
+		if _, keep := filterHubMessage(raw, testViewer(vm100ACL())); keep {
+			t.Errorf("%s must drop", name)
+		}
 	}
 }
 
 func TestFilterHubMessageTasksPayload(t *testing.T) {
-	acl := pve.NormalizePermissions(map[string]any{
-		"/vms/100": map[string]any{"VM.Audit": 1.0},
-	})
-	raw, _ := json.Marshal(map[string]any{
-		"type":  "event",
-		"topic": "tasks",
-		"data": map[string]any{
-			"connection": "lab-a",
-			"tasks": []pve.Task{
-				{UPID: "UPID:pve1:1:1:1:qmstart:100:user@pam:", Node: "pve1", ID: "100"},
-				{UPID: "UPID:pve1:1:1:1:qmstart:200:user@pam:", Node: "pve2", ID: "200"},
-			},
+	raw := hubEvent(t, "tasks", map[string]any{
+		"connection": labA,
+		"tasks": []pve.Task{
+			{UPID: "UPID:pve1:1:1:1:qmstart:100:user@pam:", Node: "pve1", ID: "100"},
+			{UPID: "UPID:pve2:1:1:1:qmstart:200:user@pam:", Node: "pve2", ID: "200"},
 		},
 	})
-	out, keep := filterHubMessage(raw, acl)
+	out, keep := filterHubMessage(raw, testViewer(vm100ACL()))
 	if !keep {
 		t.Fatal("keep tasks")
 	}
@@ -71,7 +121,7 @@ func TestFilterHubMessageTasksPayload(t *testing.T) {
 	if err := json.Unmarshal(out, &ev); err != nil {
 		t.Fatal(err)
 	}
-	if ev.Data.Connection != "lab-a" {
+	if ev.Data.Connection != labA {
 		t.Fatalf("connection %q", ev.Data.Connection)
 	}
 	if len(ev.Data.Tasks) != 1 || ev.Data.Tasks[0].ID != "100" {
@@ -79,21 +129,17 @@ func TestFilterHubMessageTasksPayload(t *testing.T) {
 	}
 }
 
-func TestFilterHubMessageDropsHiddenTopics(t *testing.T) {
-	acl := pve.NormalizePermissions(map[string]any{
-		"/vms/100":    map[string]any{"VM.Audit": 1.0},
-		"/nodes/pve1": map[string]any{"Sys.Audit": 1.0},
-	})
+func TestFilterHubMessageDetailTopics(t *testing.T) {
 	hidden := []string{
 		"task:UPID:pve2:1:1:1:qmstart:200:user@pam:",
 		"node:pve2",
 		"rrd:qemu:pve1:200:hour",
 		"rrd:node:pve2:hour",
+		"guest:pve1:qemu:200",
 	}
-	for _, topic := range hidden {
-		raw, _ := json.Marshal(map[string]any{"type": "event", "topic": topic, "data": map[string]any{}})
-		if _, keep := filterHubMessage(raw, acl); keep {
-			t.Fatalf("should drop %s", topic)
+	for _, detail := range hidden {
+		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), testViewer(vm100ACL())); keep {
+			t.Fatalf("should drop %s", detail)
 		}
 	}
 	visible := []string{
@@ -102,24 +148,90 @@ func TestFilterHubMessageDropsHiddenTopics(t *testing.T) {
 		"rrd:qemu:pve1:100:hour",
 		"guest:pve1:qemu:100",
 	}
-	for _, topic := range visible {
-		raw, _ := json.Marshal(map[string]any{"type": "event", "topic": topic, "data": map[string]any{}})
-		if _, keep := filterHubMessage(raw, acl); !keep {
-			t.Fatalf("should keep %s", topic)
+	for _, detail := range visible {
+		if _, keep := filterHubMessage(hubEvent(t, hub.ScopedTopic(labA, detail), map[string]any{}), testViewer(vm100ACL())); !keep {
+			t.Fatalf("should keep %s", detail)
 		}
 	}
 }
 
 func TestFilterHubMessageDropsUnparseableTasks(t *testing.T) {
-	acl := pve.NormalizePermissions(map[string]any{
-		"/vms/100": map[string]any{"VM.Audit": 1.0},
-	})
-	raw, _ := json.Marshal(map[string]any{
-		"type":  "event",
-		"topic": "tasks",
-		"data":  "not-a-task-list",
-	})
-	if _, keep := filterHubMessage(raw, acl); keep {
+	if _, keep := filterHubMessage(hubEvent(t, "tasks", "not-a-task-list"), testViewer(vm100ACL())); keep {
 		t.Fatal("unparseable tasks must drop, not leak")
+	}
+}
+
+func TestTopicAllowed(t *testing.T) {
+	guest := hub.ScopedTopic(labA, "guest:pve1:qemu:100")
+	other := hub.ScopedTopic(labB, "guest:pve1:qemu:100")
+	hiddenGuest := hub.ScopedTopic(labA, "guest:pve1:qemu:200")
+	cases := []struct {
+		name  string
+		topic string
+		acl   pve.ACL
+		want  bool
+	}{
+		{"broadcast", "resources", vm100ACL(), true},
+		{"own guest", guest, vm100ACL(), true},
+		{"other connection", other, vm100ACL(), false},
+		{"hidden guest", hiddenGuest, vm100ACL(), false},
+		{"bare topic", "guest:pve1:qemu:100", vm100ACL(), false},
+		{"unknown detail", hub.ScopedTopic(labA, "bogus"), vm100ACL(), false},
+		{"empty ACL", guest, pve.ACL{}, false},
+		{"admin elsewhere", other, nil, true},
+		{"admin bare topic", "node:pve1", nil, false},
+		{"admin unknown detail", hub.ScopedTopic(labB, "bogus"), nil, false},
+	}
+	for _, c := range cases {
+		if got := topicAllowed(c.topic, testViewer(c.acl)); got != c.want {
+			t.Errorf("%s: got %v", c.name, got)
+		}
+	}
+}
+
+func TestFilterHubMessageTasksFollowOwnership(t *testing.T) {
+	onlyVM := pve.NormalizePermissions(map[string]any{"/vms/100": map[string]any{"VM.Audit": 1.0}})
+	raw := hubEvent(t, "tasks", map[string]any{
+		"connection": labA,
+		"tasks": []pve.Task{
+			{UPID: "UPID:pve1:1:1:1:qmstart:100:alice@pve:", Node: "pve1", ID: "100", User: "alice@pve"},
+			{UPID: "UPID:pve1:1:1:2:qmstart:100:bob@pve:", Node: "pve1", ID: "100", User: "bob@pve"},
+		},
+	})
+	out, keep := filterHubMessage(raw, testViewer(onlyVM))
+	if !keep {
+		t.Fatal("keep tasks")
+	}
+	var ev struct {
+		Data struct {
+			Tasks []pve.Task `json:"tasks"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &ev); err != nil {
+		t.Fatal(err)
+	}
+	if len(ev.Data.Tasks) != 1 || ev.Data.Tasks[0].User != "alice@pve" {
+		t.Fatalf("tasks %+v", ev.Data.Tasks)
+	}
+	own := hub.ScopedTopic(labA, "task:UPID:pve1:1:1:1:qmstart:100:alice@pve:")
+	theirs := hub.ScopedTopic(labA, "task:UPID:pve1:1:1:2:qmstart:100:bob@pve:")
+	if !topicAllowed(own, testViewer(onlyVM)) {
+		t.Fatal("a user must be able to follow their own task")
+	}
+	if topicAllowed(theirs, testViewer(onlyVM)) {
+		t.Fatal("VM.Audit must not read another user's task")
+	}
+}
+
+func TestTopicAllowedRefusesCraftedGuests(t *testing.T) {
+	crafted := hub.ScopedTopic(labA, "guest:pve1:qemu/200/status/current#:100")
+	if topicAllowed(crafted, testViewer(vm100ACL())) {
+		t.Fatal("a topic that names VM 100 must not be able to fetch VM 200")
+	}
+	if topicAllowed(crafted, socketViewer{}) {
+		t.Fatal("a malformed topic must not reach the poller for anyone")
+	}
+	if _, keep := filterHubMessage(hubEvent(t, crafted, map[string]any{}), testViewer(vm100ACL())); keep {
+		t.Fatal("the outbound filter kept it")
 	}
 }

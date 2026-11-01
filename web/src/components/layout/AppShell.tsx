@@ -5,11 +5,12 @@ import { TreeBulkBar } from "@/components/tree/TreeBulkBar";
 import { TaskDrawer } from "@/components/tasks/TaskDrawer";
 import { Button } from "@/components/ui/button";
 import { ToastViewport } from "@/components/ui/toast";
-import { api } from "@/lib/api";
+import { api, UNAUTHORIZED_EVENT } from "@/lib/api";
 import { getActiveConnection, onActiveConnection, setActiveConnection } from "@/lib/connection";
 import { clearSelection } from "@/lib/selection";
 import { focusInventorySearch } from "@/lib/inventorySearch";
 import { useTaskCompletion } from "@/lib/taskWatch";
+import { toast } from "@/lib/toast";
 import { live } from "@/lib/ws";
 import type { InventoryGroup, Task } from "@/types";
 import { Link, Outlet, useNavigate, useRouter, useRouterState } from "@tanstack/react-router";
@@ -46,6 +47,7 @@ export function AppShell({
   useTaskCompletion(qc, tasks);
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
   const inventory = useQuery({ queryKey: ["inventory"], queryFn: api.inventory, refetchInterval: 15000 });
+  const enabledConnections = (connections.data ?? []).filter((c) => c.enabled);
 
   useEffect(() => {
     if (kind === "local" && !clusterConfigured && pathname !== "/settings") {
@@ -54,12 +56,34 @@ export function AppShell({
   }, [kind, clusterConfigured, pathname, nav]);
 
   useEffect(() => {
-    const list = connections.data ?? [];
-    if (!list.length) return;
+    // A 401 can come from Proxmox and say nothing about this session, as a
+    // wrong root password does, so ask the API before signing anyone out.
+    let checking = false;
+    const onUnauthorized = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const me = await api.me();
+        if (!me.user) void nav({ to: "/login" });
+      } catch {
+        /* Unreachable: the next request that fails will ask again. */
+      } finally {
+        checking = false;
+      }
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [nav]);
+
+  useEffect(() => {
+    if (!connections.data) return;
+    // The API refuses a connection that is disabled or gone, so don't stay on one.
+    const list = connections.data.filter((c) => c.enabled);
     const current = getActiveConnection();
-    if (!current || !list.some((c) => c.id === current)) {
-      setActiveConnection(list[0].id);
-      setActive(list[0].id);
+    if (!list.some((c) => c.id === current)) {
+      const next = list[0]?.id ?? "";
+      setActiveConnection(next);
+      setActive(next);
     }
   }, [connections.data]);
 
@@ -99,6 +123,7 @@ export function AppShell({
     return () => {
       off();
       live.unsubscribe(["resources", "tasks"]);
+      live.stop();
       window.removeEventListener("hypervane:task", onTask);
     };
   }, []);
@@ -187,7 +212,7 @@ export function AppShell({
               Create guest
             </Button>
           )}
-          {(connections.data ?? []).length > 0 && (
+          {enabledConnections.length > 0 && (
             <select
               aria-label="Active connection"
               value={activeConnection}
@@ -195,7 +220,7 @@ export function AppShell({
               onChange={(e) => setActiveConnection(e.target.value)}
               className="h-8 max-w-[12rem] rounded-md border border-white/15 bg-black/30 px-2 text-xs text-ink"
             >
-              {(connections.data ?? []).map((c) => (
+              {enabledConnections.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -207,8 +232,14 @@ export function AppShell({
             size="sm"
             variant="ghost"
             onClick={async () => {
-              await api.logout();
-              nav({ to: "/login" });
+              try {
+                await api.logout();
+              } catch (err) {
+                // The session may still be live, so don't pretend it ended.
+                toast(err instanceof Error ? err.message : "Sign out failed", "error");
+                return;
+              }
+              void nav({ to: "/login" });
             }}
           >
             Sign out

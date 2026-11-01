@@ -9,6 +9,8 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/trusted-proxies.sh /docker-entrypoint.d/40-trusted-proxies.sh
+RUN chmod +x /docker-entrypoint.d/40-trusted-proxies.sh && touch /etc/nginx/trusted-proxies.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="hypervane-web" \
