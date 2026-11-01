@@ -27,6 +27,8 @@ const (
 	maxSnapshotGuests = 400
 	maxStoppedGuests  = 150
 	insightWorkers    = 4
+
+	ttlCacheSweepAt = 4096
 )
 
 type ttlCache struct {
@@ -54,6 +56,13 @@ func (c *ttlCache) put(key string, v any) {
 	defer c.mu.Unlock()
 	if c.entries == nil {
 		c.entries = map[string]ttlEntry{}
+	}
+	if len(c.entries) >= ttlCacheSweepAt {
+		for k, e := range c.entries {
+			if time.Since(e.at) > time.Hour {
+				delete(c.entries, k)
+			}
+		}
 	}
 	c.entries[key] = ttlEntry{at: time.Now(), value: v}
 }

@@ -42,6 +42,7 @@ func TestWatchedDetailsStayOnTheirConnection(t *testing.T) {
 	p.Watch(hub.ScopedTopic("deleted", "node:pve1"))
 	p.Watch(hub.ScopedTopic("a", "guest:pve1:qemu:100"))
 	p.Watch("node:pve1")
+	p.Watch(hub.ScopedTopic("a", "node:pve1/../pve2"))
 
 	got := map[string]*pve.Client{}
 	for _, w := range p.watchedDetails("node:", conns) {

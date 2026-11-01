@@ -222,3 +222,16 @@ func TestFilterHubMessageTasksFollowOwnership(t *testing.T) {
 		t.Fatal("VM.Audit must not read another user's task")
 	}
 }
+
+func TestTopicAllowedRefusesCraftedGuests(t *testing.T) {
+	crafted := hub.ScopedTopic(labA, "guest:pve1:qemu/200/status/current#:100")
+	if topicAllowed(crafted, testViewer(vm100ACL())) {
+		t.Fatal("a topic that names VM 100 must not be able to fetch VM 200")
+	}
+	if topicAllowed(crafted, socketViewer{}) {
+		t.Fatal("a malformed topic must not reach the poller for anyone")
+	}
+	if _, keep := filterHubMessage(hubEvent(t, crafted, map[string]any{}), testViewer(vm100ACL())); keep {
+		t.Fatal("the outbound filter kept it")
+	}
+}
