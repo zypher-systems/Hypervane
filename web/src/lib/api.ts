@@ -1,5 +1,7 @@
 import { getActiveConnection } from "@/lib/connection";
 
+export const UNAUTHORIZED_EVENT = "hypervane:unauthorized";
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -25,6 +27,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/auth/")) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    }
     throw new ApiError(res.status, data.error || data.message || res.statusText);
   }
   return data as T;

@@ -204,3 +204,23 @@ func TestLoginBodyIsLimited(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
+
+func TestPublicConnectionHidesTopologyBeforeSignIn(t *testing.T) {
+	c := store.Connection{ID: "lab-a", Name: "Lab", PVEURL: "https://10.0.0.1:8006/api2/json", TLSMode: "skip-verify", Enabled: true}
+	raw, err := json.Marshal(publicConnection(c, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"pveUrl", "tlsMode", "10.0.0.1", "skip-verify"} {
+		if strings.Contains(string(raw), leak) {
+			t.Fatalf("%q reached an anonymous caller: %s", leak, raw)
+		}
+	}
+	view := publicConnection(c, false)
+	if view.ID != "lab-a" || view.Name != "Lab" || !view.Enabled {
+		t.Fatalf("the sign-in form lost what it needs: %+v", view)
+	}
+	if got := publicConnection(c, true); got.PVEURL != c.PVEURL || got.TLSMode != c.TLSMode {
+		t.Fatalf("signed-in view lost the details: %+v", got)
+	}
+}

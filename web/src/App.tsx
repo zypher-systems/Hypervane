@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/layout/AppShell";
+import { RouteError } from "@/components/layout/RouteError";
 import { api } from "@/lib/api";
 import { resetClientState } from "@/lib/session";
 import { BackupsPage } from "@/pages/Backups";
@@ -244,9 +245,7 @@ const router = createRouter({
   defaultPendingComponent: () => (
     <div className="grid h-full place-items-center text-sm text-ink-dim">Loading Hypervane…</div>
   ),
-  defaultErrorComponent: ({ error }) => (
-    <div className="grid h-full place-items-center p-8 text-sm text-rose-400">{error.message}</div>
-  ),
+  defaultErrorComponent: RouteError,
 });
 
 declare module "@tanstack/react-router" {

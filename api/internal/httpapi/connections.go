@@ -26,8 +26,8 @@ type connectionWriteRequest struct {
 type connectionView struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
-	PVEURL      string   `json:"pveUrl"`
-	TLSMode     string   `json:"tlsMode"`
+	PVEURL      string   `json:"pveUrl,omitempty"`
+	TLSMode     string   `json:"tlsMode,omitempty"`
 	Enabled     bool     `json:"enabled"`
 	Online      *bool    `json:"online,omitempty"`
 	Error       string   `json:"error,omitempty"`
@@ -65,15 +65,21 @@ func (s *Server) publicConnections(ctx context.Context, user store.User, authed 
 		if authed && user.Kind == store.UserKindPVE && c.ID != connectionID {
 			continue
 		}
-		out = append(out, connectionView{
-			ID:      c.ID,
-			Name:    c.Name,
-			PVEURL:  c.PVEURL,
-			TLSMode: c.TLSMode,
-			Enabled: c.Enabled,
-		})
+		out = append(out, publicConnection(c, authed))
 	}
 	return out
+}
+
+// publicConnection describes a connection for the sign-in form as well as the
+// app. Someone who hasn't signed in gets only what the form needs to offer a
+// choice, not where the cluster is or how it's reached.
+func publicConnection(c store.Connection, authed bool) connectionView {
+	view := connectionView{ID: c.ID, Name: c.Name, Enabled: c.Enabled}
+	if authed {
+		view.PVEURL = c.PVEURL
+		view.TLSMode = c.TLSMode
+	}
+	return view
 }
 
 func (s *Server) handleListVisibleConnections(w http.ResponseWriter, r *http.Request) {
