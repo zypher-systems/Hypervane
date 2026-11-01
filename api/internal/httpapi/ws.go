@@ -149,9 +149,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 // apart from the write loop so a slow Proxmox can't hold up delivery.
 //
 // A brief failure keeps the last good answer, because an empty one would blank
-// the inventory, but never past socketACLMaxAge: each lookup's deadline is the
-// moment the old answer expires, so a hang can't outlast it either. Each tick
-// reloads the session, because a socket outlives its first Proxmox ticket.
+// the inventory, but never past socketACLMaxAge. A timer ends the answer at that
+// moment rather than the next tick, and a lookup that started in time is
+// cancelled then too. Only after that does a lookup get a budget of its own, so
+// one that fails or hangs has nothing left to prolong. Each lookup reloads the
+// session, because a socket outlives its first Proxmox ticket.
 func (s *Server) refreshSocketViewer(ctx context.Context, sess store.Session, user store.User, viewer *atomic.Pointer[socketViewer], topics *socketTopics, stop <-chan struct{}) {
 	every, maxAge := s.socketACLEvery, s.socketACLMaxAge
 	if every == 0 {
@@ -160,34 +162,38 @@ func (s *Server) refreshSocketViewer(ctx context.Context, sess store.Session, us
 	if maxAge == 0 {
 		maxAge = socketACLMaxAge
 	}
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	lastGood := time.Now()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-		}
-		deadline := lastGood.Add(maxAge)
-		if now := time.Now(); !deadline.After(now) {
-			deadline = now.Add(maxAge) // Already closed: keep trying to recover.
-		}
-		attempt, cancel := context.WithDeadline(ctx, deadline)
-		acl, err := s.currentViewerACL(attempt, sess.TokenHash, user)
-		cancel()
-		switch {
-		case err == nil:
-			lastGood = time.Now()
-		case time.Since(lastGood) < maxAge:
-			continue
-		default:
-			acl = pve.ACL{}
-		}
+	install := func(acl pve.ACL) {
 		next := *viewer.Load()
 		next.acl = acl
 		viewer.Store(&next)
 		topics.reconcile(next)
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	lastGood := time.Now()
+	expiry := time.NewTimer(maxAge)
+	defer expiry.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-expiry.C:
+		case <-ticker.C:
+		}
+		deadline := lastGood.Add(maxAge)
+		if now := time.Now(); !deadline.After(now) {
+			install(pve.ACL{})
+			deadline = now.Add(maxAge)
+		}
+		attempt, cancel := context.WithDeadline(ctx, deadline)
+		acl, err := s.currentViewerACL(attempt, sess.TokenHash, user)
+		cancel()
+		if err != nil {
+			continue
+		}
+		lastGood = time.Now()
+		expiry.Reset(maxAge)
+		install(acl)
 	}
 }
 

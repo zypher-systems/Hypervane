@@ -3,10 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -319,4 +321,103 @@ func TestOpenSocketFailsClosedDuringAHang(t *testing.T) {
 	cluster.hang(true)
 	t.Cleanup(func() { cluster.hang(false) })
 	waitForGuests(t, s, conn, 0)
+}
+
+// A socket that failed closed has to come back once Proxmox does.
+func TestOpenSocketRecoversAfterFailingClosed(t *testing.T) {
+	cluster := &liveCluster{vmids: []int{100}}
+	s, conn := openLiveSocket(t, cluster, 100*time.Millisecond)
+	waitForGuests(t, s, conn, 1)
+	cluster.fail(true)
+	waitForGuests(t, s, conn, 0)
+	cluster.fail(false)
+	waitForGuests(t, s, conn, 1)
+}
+
+// refreshProbe watches a running refresh from inside its lookups, so a test can
+// see what a lookup starts with instead of guessing from timing.
+type refreshProbe struct {
+	viewer *atomic.Pointer[socketViewer]
+	topics *socketTopics
+	topic  string
+}
+
+// blanked reports that the viewer lost the guest and the poller stopped being
+// asked for it.
+func (p refreshProbe) blanked() bool {
+	acl := p.viewer.Load().acl
+	if acl == nil || len(acl) != 0 {
+		return false
+	}
+	p.topics.mu.Lock()
+	defer p.topics.mu.Unlock()
+	return !hasTopic(p.topics.held, p.topic) && hasTopic(p.topics.pending, p.topic)
+}
+
+func startRefresh(t *testing.T, every, maxAge time.Duration, lookup func(context.Context, refreshProbe) (store.Session, error)) refreshProbe {
+	t.Helper()
+	topics, viewer := topicsFor(t, vm100ACL())
+	probe := refreshProbe{viewer: viewer, topics: topics, topic: hub.ScopedTopic(labA, "guest:pve1:qemu:100")}
+	topics.subscribe([]string{probe.topic}, viewer)
+	if !hasTopic(topics.held, probe.topic) {
+		t.Fatalf("held %v", topics.held)
+	}
+	s := &Server{socketACLEvery: every, socketACLMaxAge: maxAge}
+	s.sessionLookup = func(ctx context.Context, _ string) (store.Session, error) { return lookup(ctx, probe) }
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.refreshSocketViewer(context.Background(), store.Session{}, store.User{}, viewer, topics, stop)
+	}()
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+	})
+	return probe
+}
+
+// Fast failures up to the cap, then a hang. Only an expired answer earns a
+// lookup a full budget, so one that long must start with the guest already gone,
+// and must leave it gone. No tick lands on the cap, so the old answer can't be
+// blanked by a failure that happens to arrive at the boundary.
+func TestRefreshBlanksBeforeARecoveryLookupStarts(t *testing.T) {
+	const every, maxAge = 30 * time.Millisecond, 100 * time.Millisecond
+	recoveries := make(chan bool, 8)
+	startRefresh(t, every, maxAge, func(ctx context.Context, p refreshProbe) (store.Session, error) {
+		deadline, _ := ctx.Deadline()
+		if time.Until(deadline) > maxAge-every/2 {
+			select {
+			case recoveries <- p.blanked():
+			default:
+			}
+			<-ctx.Done()
+			return store.Session{}, ctx.Err()
+		}
+		return store.Session{}, errors.New("unavailable")
+	})
+	for range 2 {
+		select {
+		case blanked := <-recoveries:
+			if !blanked {
+				t.Fatal("a recovery lookup started with the expired answer still in place")
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("no recovery lookup started")
+		}
+	}
+}
+
+// With no tick due, only the cap itself can end the old answer.
+func TestRefreshExpiresBetweenTicks(t *testing.T) {
+	probe := startRefresh(t, time.Hour, 50*time.Millisecond, func(context.Context, refreshProbe) (store.Session, error) {
+		return store.Session{}, errors.New("unavailable")
+	})
+	deadline := time.Now().Add(3 * time.Second)
+	for !probe.blanked() {
+		if time.Now().After(deadline) {
+			t.Fatal("the answer outlived its cap waiting for a tick")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
