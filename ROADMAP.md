@@ -4,6 +4,17 @@ Path from the shipped daily-ops console to full Proxmox VE UI coverage, then Hyp
 
 Native PVE exposes about 675 API operations. Version 0.1 covers the jobs operators run every day. Each later version is a shippable slice against a real cluster.
 
+## What 1.0 means
+
+1.0 means parity with the stock Proxmox VE UI on one cluster. Every item is done, and 1.0 has shipped.
+
+- Run the daily jobs: dashboard, guests, storage, tasks, and consoles
+- Manage guests fully: clone, migrate, disks, cloud-init, uploads, and bulk actions
+- Protect data: backup jobs, restore, replication, and high availability
+- Control access: users, ACLs, realms, and per-user Proxmox sessions
+- Administer the cluster: firewall, host networking, disks, updates, certificates, SDN, and Ceph
+- Close the stock UI's remaining gaps, without the browser ever holding a Proxmox ticket
+
 ## Release train
 
 | Version | Name | Theme | Status |
@@ -39,11 +50,11 @@ Native PVE exposes about 675 API operations. Version 0.1 covers the jobs operato
 | 3.2.2 | Wrong target | Reset entity/live state; tree and console use the row connection | Shipped |
 | 3.2.3 | Live hub | Websocket single-writer, watcher unwatch, live ACL filter; hardware refresh on UPID | Shipped |
 | 3.2.4 | Task completion | Invalidate and toast when the UPID finishes | Shipped |
-| 3.2.5 | Authz and session | MCP/history ACL, audit admin, remote-migrate gate, logout, XSS | Planned |
-| 3.2.6 | Freshness and hub load | Summary poll, query keys, empty states, poller and TLS leftovers | Planned |
-| 3.3.0 | Calm redesign | Tokens, routed tabs, datacenter overview, insights, token-scoped UI, PVE 9 decode fixes | In progress |
+| 3.2.5 | Authz and session | MCP/history ACL, audit scope, logout, login limits, connection isolation, XSS | Shipped in 3.3.0 |
+| 3.3.0 | Calm redesign | Tokens, routed tabs, datacenter overview, insights, token-scoped UI, PVE 9 decode fixes | Shipped |
+| 3.3.1 | Freshness and hub load | Summary poll, query keys, empty states, poller and TLS leftovers | Planned |
 
-Build order is intentional: finish one cluster before multi-cluster. 3.2.2–3.2.6 is a correctness train (UI glitch + harden), not a feature train. Each sub-point is its own `N.N.N-patch` branch from `dev`.
+Build order is intentional: finish one cluster before multi-cluster. 3.2.2–3.2.5 and 3.3.1 are a correctness train (UI glitch + harden), not a feature train. Each sub-point is its own `N.N.N-patch` branch from `dev`.
 
 ## 0.1 Daily Ops — shipped
 
@@ -341,30 +352,21 @@ Invalidate and toast when the Proxmox UPID finishes on the remaining call sites.
 - Pass query keys from the remaining `attachTask` sites so a finished `exitstatus` refreshes the panel that queued the work (HV-001, HV-002, HV-017)
 - Toast start from `attachTask` when keys are registered; the existing watcher toasts the result (HV-006)
 
-## 3.2.5 Authz and session — planned
+## 3.2.5 Authz and session — shipped in 3.3.0
 
-Gates, logout, and XSS. Branch `3.2.5-patch`. No guest writes.
+Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.0. No guest writes.
 
-- ACL on MCP and history (`mcp-acl`)
-- Admin-only audit (`audit-scope`)
-- Paid gate on remote-migrate (`remote-migrate-gate`; done in 3.3.0 as Pro)
-- Hide PVE URLs and TLS mode when unauthenticated (`auth-topology`)
-- Login backoff and body cap (`login-abuse`)
-- LiveSocket stop on logout; clear the query cache (`livesocket`, `logout-cache`)
-- Safe MetricChart tooltips (`metric-xss`)
-- Route error boundary and 401 bounce (`shell-errors`)
+- Viewer permissions on MCP, metric history, ring and IOPS samples, and cached cluster status
+- Audit limited to the viewer's connection, and to their own events without `Sys.Audit` on `/`
+- Paid gate on remote-migrate removed with licensing in 3.3.0
+- Hide PVE URLs and TLS mode until sign-in
+- Limit failed sign-ins per address and account, and cap sign-in bodies
+- Logout ends the session, closes its sockets, and clears the client's state
+- Requests never fall back to another cluster; live topics name their connection
+- Safe MetricChart tooltips
+- Route error boundary and 401 bounce
 
-## 3.2.6 Freshness and hub load — planned
-
-Remaining stale UI, then leftover realtime majors. Branch `3.2.6-patch`.
-
-- Central `["summary"]` interval and query keys that include node/type (HV-005, HV-007)
-- Shared EmptyState that takes query status (HV-008, HV-026)
-- Notes draft reset, storage filter reset, formatting and copy (HV-009–015, HV-020, HV-022)
-- Console write deadlines, task-log resume, poller workers, inventory change-suppression, system-CA TLS verify, audit quality
-- Minors after this cut. Alerts stay the first Pro hole once the window closes.
-
-## 3.3.0 Calm redesign — in progress
+## 3.3.0 Calm redesign — shipped
 
 Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by default, one accent for the primary action, and color only where something needs a decision.
 
@@ -377,6 +379,16 @@ Branch `3.3.0-redesign`. Direction "A refined" from the design canvas: quiet by 
 - GitHub Actions publishes linux/amd64 api and web images to ghcr.io. `latest` and `main` track the default branch. A `vX.Y.Z` tag also publishes `X.Y.Z`.
 - Recipes reworked: every recipe plans its exact steps before running (the preview is the plan), validates inputs against the cluster, asks before destructive runs, and reports each run step by step (`/scripts/jobs`). Fixed: Ubuntu images saved as `.img` (Proxmox refuses them for import), Fedora 42 gone from the mirror (now Fedora 44, newest build looked up), re-running a template recipe failing on the earlier download, refresh deleting the template before the download succeeded, SSH keys rejected by Proxmox (form-encoded `+`), containers sent `sshkeys` instead of `ssh-public-keys`. New: Debian 12, Ubuntu 22.04, openSUSE Leap 16.0, Arch, AlmaLinux 10, Rocky 10, CentOS Stream 10, deploy from template, deploy several, check updates, shut down / start a node's guests, move all guests off a node, schedule backups for unprotected guests, clean up old snapshots
 - Fixes found against a live PVE 9 cluster: double-encoded path IDs (task stop, HA, users), 50-line task logs, and response types for cluster config, certificates, APT repositories, LVM, replication status, prune preview, users, OpenID, ACME schema, IPAM status, vzdump defaults; PVE 9 HA groups and datacenter firewall log
+
+## 3.3.1 Freshness and hub load — planned
+
+Remaining stale UI, then leftover realtime majors. Branch `3.3.1-patch`.
+
+- Central `["summary"]` interval and query keys that include node/type (HV-005, HV-007)
+- Shared EmptyState that takes query status (HV-008, HV-026)
+- Notes draft reset, storage filter reset, formatting and copy (HV-009–015, HV-020, HV-022)
+- Console write deadlines, task-log resume, poller workers, inventory change-suppression, system-CA TLS verify, audit quality
+- Minors after this cut. Alerts stay the first Pro hole once the window closes.
 
 ## Tabled after 3.1
 

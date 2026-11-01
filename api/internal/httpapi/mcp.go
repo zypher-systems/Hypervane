@@ -10,6 +10,9 @@ import (
 	"hypervane/internal/store"
 )
 
+// mcpVersion is what the MCP endpoint reports. It tracks the release.
+const mcpVersion = "3.3.0"
+
 type mcpReq struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id"`
@@ -21,7 +24,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"name":    "hypervane",
-			"version": "3.1.0",
+			"version": mcpVersion,
 			"tools":   mcpToolDefs(),
 		})
 		return
@@ -36,7 +39,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, mcpOK(req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "hypervane", "version": "3.1.0"},
+			"serverInfo":      map[string]any{"name": "hypervane", "version": mcpVersion},
 		}))
 	case "ping":
 		writeJSON(w, http.StatusOK, mcpOK(req.ID, map[string]any{}))

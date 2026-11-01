@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Hypervane API
-  version: 3.1.0
+  version: 3.3.0
   description: Backend-for-frontend for a Proxmox VE cluster. Script Library, audit, long history, and read-only MCP.
 servers:
   - url: /api
