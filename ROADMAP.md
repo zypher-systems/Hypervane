@@ -365,6 +365,7 @@ Gates, logout, and XSS. This never shipped alone: it went out as part of 3.3.0. 
 - Requests never fall back to another cluster; live topics name their connection
 - Read checks on cached data follow Proxmox's own answer for the viewer, including `NoAccess` and non-propagating grants
 - Live topics must match their exact shape before the ACL check or the poller sees them
+- Open sockets refresh what the viewer may read, and resource ids Hypervane doesn't know are denied
 - Safe MetricChart tooltips
 - Route error boundary and 401 bounce
 

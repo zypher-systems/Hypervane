@@ -139,7 +139,7 @@ func TestCanSeeResourceID(t *testing.T) {
 		}
 	}
 	root := NormalizePermissions(map[string]any{"/": map[string]any{"Sys.Audit": 1.0, "VM.Audit": 1.0}})
-	if !CanSeeResourceID("anything", root) || !CanSeeResourceID("qemu/999", root) {
+	if !CanSeeResourceID("qemu/999", root) {
 		t.Fatal("the right privileges on / should carry down")
 	}
 	sysOnly := NormalizePermissions(map[string]any{"/": map[string]any{"Sys.Audit": 1.0}})
@@ -322,5 +322,66 @@ func TestSDNFollowsItsZone(t *testing.T) {
 	}, acl)
 	if len(got) != 1 || got[0].ID != "sdn/pve1/lab" {
 		t.Fatalf("%+v", got)
+	}
+}
+
+// Ids exactly as Proxmox's /cluster/resources sends them.
+func TestResourceIDsFollowProxmox(t *testing.T) {
+	pool := NormalizePermissions(map[string]any{"/pool/lab": map[string]any{"Pool.Audit": 1.0}})
+	if !CanSeeResourceID("/pool/lab", pool) {
+		t.Error("Pool.Audit must read its pool by Proxmox's id")
+	}
+	sysOnly := NormalizePermissions(map[string]any{"/": map[string]any{"Sys.Audit": 1.0}})
+	for _, id := range []string{"/pool/lab", "network/pve1/zone/lab", "network/pve1/fabric/core", "sdn/pve1/lab"} {
+		if CanSeeResourceID(id, sysOnly) {
+			t.Errorf("Sys.Audit on / read %s", id)
+		}
+	}
+	zone := NormalizePermissions(map[string]any{"/sdn/zones/lab": map[string]any{"SDN.Audit": 1.0}})
+	if !CanSeeResourceID("network/pve1/zone/lab", zone) || CanSeeResourceID("network/pve1/zone/other", zone) {
+		t.Error("a zone follows its own path")
+	}
+	fabric := NormalizePermissions(map[string]any{"/sdn/fabrics/core": map[string]any{"SDN.Audit": 1.0}})
+	if !CanSeeResourceID("network/pve1/fabric/core", fabric) {
+		t.Error("a fabric follows its own path")
+	}
+	got := FilterResources([]Resource{
+		{ID: "network/pve1/zone/lab", Type: "network"},
+		{ID: "network/pve1/zone/other", Type: "network"},
+	}, zone)
+	if len(got) != 1 || got[0].ID != "network/pve1/zone/lab" {
+		t.Errorf("network rows: %+v", got)
+	}
+	if got := FilterResources([]Resource{{ID: "network/pve1/zone/lab", Type: "network"}}, sysOnly); len(got) != 0 {
+		t.Errorf("Sys.Audit showed a zone: %+v", got)
+	}
+}
+
+// Proxmox suppresses types it doesn't know so nothing leaks. So do we.
+func TestUnknownResourcesAreDenied(t *testing.T) {
+	root := NormalizePermissions(map[string]any{"/": map[string]any{
+		"Sys.Audit": 1.0, "VM.Audit": 1.0, "Datastore.Audit": 1.0, "Pool.Audit": 1.0, "SDN.Audit": 1.0,
+	}})
+	for _, id := range []string{"", "anything", "future/thing", "network/pve1/unknown/x", "qemu/abc", "qemu/100/extra"} {
+		if CanSeeResourceID(id, root) {
+			t.Errorf("%q was readable", id)
+		}
+	}
+	if got := FilterResources([]Resource{{ID: "future/thing", Type: "future"}}, root); len(got) != 0 {
+		t.Errorf("unknown row kept: %+v", got)
+	}
+}
+
+func TestRestrictToCoversNetworkRows(t *testing.T) {
+	acl := NormalizePermissions(map[string]any{"/": map[string]any{"SDN.Audit": 1.0}, "/sdn": map[string]any{"SDN.Audit": 1.0}})
+	acl.restrictTo([]Resource{
+		{ID: "network/pve1/zone/lab", Type: "network"},
+		{ID: "/pool/team", Type: "pool", Pool: "team"},
+	})
+	if !CanSeeResourceID("network/pve1/zone/lab", acl) || !CanSeeResourceID("/pool/team", acl) {
+		t.Error("the viewer's own rows must stay readable")
+	}
+	if CanSeeResourceID("network/pve1/zone/other", acl) {
+		t.Error("a zone outside the viewer's own list must be hidden")
 	}
 }
