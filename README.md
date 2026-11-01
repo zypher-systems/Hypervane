@@ -4,6 +4,39 @@ A modern Proxmox VE operations console. Hypervane is a Docker stack: a Go backen
 
 Version 3.2 grows Recipes and Scripts. Fleet, SSO, and MCP writes stay tabled; see [ROADMAP.md](ROADMAP.md).
 
+![The Hypervane datacenter overview, with insights, node health and failover capacity](assets/screenshots/overview.png)
+
+## Screenshots
+
+These show simulated clusters, so every name, address and number in them is invented. Select an image to see it at full size.
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="assets/screenshots/guest.png"><img src="assets/screenshots/guest.png" alt="A guest's live status, details and history charts"></a></td>
+    <td width="50%" valign="top"><a href="assets/screenshots/top.png"><img src="assets/screenshots/top.png" alt="The Top 10 page ranking the busiest guests by CPU"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Guests.</strong> Live status, details, and history for every guest.</td>
+    <td><strong>Top 10.</strong> The guests putting the most pressure on the cluster.</td>
+  </tr>
+  <tr>
+    <td><a href="assets/screenshots/recipes.png"><img src="assets/screenshots/recipes.png" alt="The Recipes page with a form for a Debian cloud template"></a></td>
+    <td><a href="assets/screenshots/backups.png"><img src="assets/screenshots/backups.png" alt="Backup coverage listing each guest and its last backup"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Recipes.</strong> Common jobs that show their exact steps before they run.</td>
+    <td><strong>Backups.</strong> Which guests are covered, and when each last ran.</td>
+  </tr>
+  <tr>
+    <td><a href="assets/screenshots/storage.png"><img src="assets/screenshots/storage.png" alt="A storage page with usage history and its volumes"></a></td>
+    <td><a href="assets/screenshots/tasks.png"><img src="assets/screenshots/tasks.png" alt="The task drawer streaming the log of a live migration"></a></td>
+  </tr>
+  <tr>
+    <td><strong>Storage.</strong> Usage over time and everything stored there.</td>
+    <td><strong>Tasks.</strong> Running work with its log streaming as it happens.</td>
+  </tr>
+</table>
+
 ## Stack
 
 - `web` — React, Vite, Tailwind, TanStack Query/Router, uPlot, noVNC, SPICE-HTML5, xterm.js
